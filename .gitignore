@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Firebase local state and logs
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+
+# Vercel local state
+.vercel/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
