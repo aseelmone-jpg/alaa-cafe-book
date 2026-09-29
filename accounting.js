@@ -54,10 +54,37 @@
     return lines;
   }
 
+  function upiStatement(entries) {
+    let balance = 0;
+    return [...entries].sort((a, b) => a.date.localeCompare(b.date)).flatMap(entry => {
+      const received = amount(entry.upi);
+      if (received <= 0) return [];
+      const opening = balance;
+      balance = amount(balance + received);
+      return [{ entry, opening, received, closing: balance }];
+    });
+  }
+
+  function ledgers(entries) {
+    const accounts = new Map();
+    for (const line of journalLines(entries)) {
+      const debit = accounts.get(line.debit) || { account: line.debit, debit: 0, credit: 0 };
+      debit.debit = amount(debit.debit + line.amount);
+      accounts.set(line.debit, debit);
+      const credit = accounts.get(line.credit) || { account: line.credit, debit: 0, credit: 0 };
+      credit.credit = amount(credit.credit + line.amount);
+      accounts.set(line.credit, credit);
+    }
+    return [...accounts.values()].sort((a, b) => a.account.localeCompare(b.account)).map(account => {
+      const net = amount(account.debit - account.credit);
+      return { ...account, balance: amount(Math.abs(net)), side: net >= 0 ? 'Dr' : 'Cr' };
+    });
+  }
+
   function formatMoney(value) {
     const number = amount(value);
     return '₹' + number.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(number) ? 0 : 2, maximumFractionDigits: 2 });
   }
 
-  return { amount, validateEntry, dailyBalances, totals, journalLines, formatMoney };
+  return { amount, validateEntry, dailyBalances, totals, journalLines, upiStatement, ledgers, formatMoney };
 });
