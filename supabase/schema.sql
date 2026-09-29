@@ -56,4 +56,28 @@ create policy "Owners manage their day entries" on public.day_entries
 grant select, insert, update, delete on public.cafes to authenticated;
 grant select, insert, update, delete on public.day_entries to authenticated;
 
+
+create table if not exists public.journal_vouchers (
+  id uuid primary key default gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  cafe_id uuid not null references public.cafes(id) on delete cascade,
+  voucher_no integer not null check (voucher_no > 0),
+  voucher_date date not null,
+  remark text not null default '',
+  lines jsonb not null check (jsonb_typeof(lines) = 'array' and jsonb_array_length(lines) >= 2),
+  created_at timestamptz not null default now(),
+  unique (cafe_id, voucher_no)
+);
+
+alter table public.journal_vouchers enable row level security;
+drop policy if exists "Owners manage their journal vouchers" on public.journal_vouchers;
+create policy "Owners manage their journal vouchers" on public.journal_vouchers
+  for all to authenticated
+  using (owner_id = (select auth.uid()))
+  with check (owner_id = (select auth.uid()) and exists (
+    select 1 from public.cafes
+    where cafes.id = journal_vouchers.cafe_id and cafes.owner_id = (select auth.uid())
+  ));
+grant select, insert, update, delete on public.journal_vouchers to authenticated;
+
 commit;
