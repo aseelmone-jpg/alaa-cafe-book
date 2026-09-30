@@ -214,4 +214,23 @@ create policy "Admins delete journal vouchers" on public.journal_vouchers
   for delete to authenticated using (owner_id = (select auth.uid()) and (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 grant select, insert, update, delete on public.journal_vouchers to authenticated;
 
+-- Realtime subscriptions used by the browser app. Keep this idempotent so the
+-- schema script is safe to rerun after tables have already been added manually.
+do $realtime$
+declare
+  table_name text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach table_name in array array['day_entries', 'journal_vouchers', 'cafe_user_features'] loop
+      if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = table_name
+      ) then
+        execute format('alter publication supabase_realtime add table public.%I', table_name);
+      end if;
+    end loop;
+  end if;
+end;
+$realtime$;
+
 commit;
