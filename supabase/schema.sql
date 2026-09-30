@@ -218,15 +218,15 @@ grant select, insert, update, delete on public.journal_vouchers to authenticated
 -- schema script is safe to rerun after tables have already been added manually.
 do $realtime$
 declare
-  table_name text;
+  v_table_name text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach table_name in array array['day_entries', 'journal_vouchers', 'cafe_user_features'] loop
+    foreach v_table_name in array array['day_entries', 'journal_vouchers', 'cafe_user_features'] loop
       if not exists (
         select 1 from pg_publication_tables
-        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = table_name
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = v_table_name
       ) then
-        execute format('alter publication supabase_realtime add table public.%I', table_name);
+        execute format('alter publication supabase_realtime add table public.%I', v_table_name);
       end if;
     end loop;
   end if;
