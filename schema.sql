@@ -19,7 +19,7 @@ create table if not exists public.cafe_members (
 create table if not exists public.cafe_user_features (
   cafe_id uuid not null references public.cafes(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
-  features jsonb not null default '{"dayBook":true,"sales":true,"purchases":true,"expenses":true,"upiAccount":true,"journalEntry":true,"cash":true,"ledgers":true}'::jsonb,
+  features jsonb not null default '{"dayBook":true,"sales":true,"purchases":true,"expenses":true,"upiAccount":true,"reportsPnl":false,"journalEntry":true,"cash":true,"ledgers":true}'::jsonb,
   updated_at timestamptz not null default now(),
   primary key (cafe_id, user_id),
   check (jsonb_typeof(features) = 'object')
@@ -113,7 +113,7 @@ begin
   end if;
   return query
     select m.user_id, u.email::text,
-      coalesce(f.features, '{"dayBook":true,"sales":true,"purchases":true,"expenses":true,"upiAccount":true,"journalEntry":true,"cash":true,"ledgers":true}'::jsonb)
+      coalesce(f.features, '{"dayBook":true,"sales":true,"purchases":true,"expenses":true,"upiAccount":true,"reportsPnl":false,"journalEntry":true,"cash":true,"ledgers":true}'::jsonb)
     from public.cafe_members m
     join auth.users u on u.id = m.user_id
     left join public.cafe_user_features f on f.cafe_id = m.cafe_id and f.user_id = m.user_id
