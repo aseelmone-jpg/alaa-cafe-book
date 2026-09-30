@@ -164,7 +164,6 @@ grant select on public.cafe_members to authenticated;
 grant select, insert, update, delete on public.cafe_user_features to authenticated;
 grant select, insert, update, delete on public.day_entries to authenticated;
 
-
 create table if not exists public.journal_vouchers (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
