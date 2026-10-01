@@ -59,6 +59,88 @@ test('builds a running UPI statement from received payments only', () => {
   ]);
 });
 
+test('saved vouchers preserve every side through open and unchanged save', () => {
+  const examples = [
+    [{ side: 'debit', particulars: 'Cash', amount: 50 }, { side: 'credit', particulars: 'Sales', amount: 50 }],
+    [{ side: 'debit', particulars: 'Cash', amount: 40 }, { side: 'debit', particulars: 'Purchases', amount: 10 }, { side: 'credit', particulars: 'Sales', amount: 50 }],
+    [{ side: 'credit', particulars: 'Capital', amount: 50 }, { side: 'debit', particulars: 'Cash', amount: 20 }, { side: 'debit', particulars: 'Purchases', amount: 30 }],
+    [{ side: 'debit', particulars: 'Cash', amount: 20 }, { side: 'credit', particulars: 'Capital', amount: 10 }, { side: 'debit', particulars: 'Purchases', amount: 5 }, { side: 'credit', particulars: 'Sales', amount: 15 }],
+  ];
+  for (const saved of examples) {
+    const opened = accounting.journalLineSides(saved, saved[0].side, true);
+    assert.deepEqual(opened, saved, 'opening must retain the stored sides and values');
+    assert.equal(accounting.validateVoucherLines(opened), '', 'example must be a valid balanced voucher');
+    const savedAgain = accounting.voucherLinesForSave(opened);
+    assert.deepEqual(savedAgain, saved, 'an unchanged save must retain the same voucher meaning');
+    assert.deepEqual(savedAgain.map(line => line.side), saved.map(line => line.side));
+  }
+});
+
+test('new voucher lines alternate from the first Debit/To or Credit/From selection', () => {
+  const blankLines = [
+    { particulars: 'Cash', amount: 40 },
+    { particulars: 'Purchases', amount: 10 },
+    { particulars: 'Sales', amount: 50 },
+  ];
+  assert.deepEqual(accounting.journalLineSides(blankLines, 'debit').map(line => line.side), ['debit', 'credit', 'debit']);
+  assert.deepEqual(accounting.journalLineSides(blankLines, 'credit').map(line => line.side), ['credit', 'debit', 'credit']);
+});
+
+test('journal voucher validation requires balanced, valid debit and credit lines', () => {
+  const balanced = [
+    { side: 'debit', particulars: 'Cash', amount: '125.50' },
+    { side: 'credit', particulars: 'Sales', amount: '125.50' },
+  ];
+  assert.equal(accounting.validateVoucherLines(balanced), '');
+  assert.match(accounting.validateVoucherLines([...balanced.slice(0, 1), { ...balanced[1], amount: '125.49' }]), /equal/);
+  assert.match(accounting.validateVoucherLines([{ ...balanced[0], amount: '0' }, balanced[1]]), /valid positive/);
+  assert.match(accounting.validateVoucherLines([{ ...balanced[0], side: 'invalid' }, balanced[1]]), /Debit or Credit/);
+});
+
+test('journal postings update the expected account balances and P&L totals', () => {
+  const vouchers = [{ date: '2026-09-30', lines: [
+    { side: 'debit', particulars: 'Cash', amount: 100 },
+    { side: 'debit', particulars: 'UPI Account', amount: 60 },
+    { side: 'debit', particulars: 'Purchases', amount: 20 },
+    { side: 'debit', particulars: 'Other Expenses', amount: 5 },
+    { side: 'credit', particulars: 'Sales', amount: 185 },
+  ] }];
+  assert.deepEqual(accounting.totals([], vouchers), { sales: 185, upi: -60, purchases: -20, expenses: -5 });
+  const balances = Object.fromEntries(accounting.ledgers([], vouchers).map(line => [line.account, [line.balance, line.side]]));
+  assert.deepEqual(balances.Cash, [100, 'Cr']);
+  assert.deepEqual(balances['UPI Account'], [60, 'Cr']);
+  assert.deepEqual(balances.Purchases, [20, 'Cr']);
+  assert.deepEqual(balances['Other Expenses'], [5, 'Cr']);
+  assert.deepEqual(balances.Sales, [185, 'Cr']);
+});
+
+test('journal Debit/To subtracts and Credit/From adds to selected account balances', () => {
+  const entries = [{ date: '2026-09-30', sale: 100, upi: 40, purchase: 20, otherExpense: 5 }];
+  const vouchers = [
+    { date: '2026-09-30', lines: [{ side: 'debit', particulars: 'Cash', amount: 10 }, { side: 'credit', particulars: 'Sales', amount: 10 }] },
+    { date: '2026-09-30', lines: [{ side: 'debit', particulars: 'Sales', amount: 4 }, { side: 'credit', particulars: 'Cash', amount: 4 }] },
+    { date: '2026-09-30', lines: [{ side: 'debit', particulars: 'UPI Account', amount: 5 }, { side: 'credit', particulars: 'Other Expenses', amount: 5 }] },
+    { date: '2026-09-30', lines: [{ side: 'debit', particulars: 'Other Expenses', amount: 2 }, { side: 'credit', particulars: 'UPI Account', amount: 2 }] },
+    { date: '2026-09-30', lines: [{ side: 'debit', particulars: 'Purchases', amount: 3 }, { side: 'credit', particulars: 'Cash', amount: 3 }] },
+    { date: '2026-09-30', lines: [{ side: 'debit', particulars: 'Cash', amount: 1 }, { side: 'credit', particulars: 'Purchases', amount: 1 }] },
+  ];
+  const balances = Object.fromEntries(accounting.ledgers(entries, vouchers).map(line => [line.account, [line.balance, line.side]]));
+  assert.deepEqual(balances.Cash, [31, 'Dr']);
+  assert.deepEqual(balances['UPI Account'], [37, 'Dr']);
+  assert.deepEqual(balances.Sales, [106, 'Cr']);
+  assert.deepEqual(balances.Purchases, [18, 'Dr']);
+  assert.deepEqual(balances['Other Expenses'], [8, 'Dr']);
+  assert.deepEqual(accounting.totals(entries, vouchers), { sales: 106, upi: 37, purchases: 18, expenses: 8 });
+  const cashDay = accounting.dailyBalances(entries, vouchers)[0];
+  assert.equal(cashDay.closing, 31);
+  assert.equal(cashDay.journalDebit, 11);
+  assert.equal(cashDay.journalCredit, 7);
+  const upiDay = accounting.upiStatement(entries, vouchers)[0];
+  assert.equal(upiDay.closing, 37);
+  assert.equal(upiDay.journalDebit, 5);
+  assert.equal(upiDay.journalCredit, 2);
+});
+
 test('summarizes debit and credit balances for each ledger account', () => {
   const ledgers = accounting.ledgers([
     { date: '2026-09-01', sale: 100, upi: 60, purchase: 10, otherExpense: 5 },
