@@ -295,12 +295,12 @@ create policy "Admins manage journal account options" on public.journal_account_
 revoke all on public.journal_account_options from public, anon, authenticated;
 grant select, insert, update on public.journal_account_options to authenticated;
 
--- Seed only account names already used by the current day-book posting logic, plus
--- any names already present in saved vouchers. Preserve prior enabled/disabled choices.
+-- Seed the current journal accounts, including Bank for transfers, plus any names
+-- already present in saved vouchers. Preserve prior enabled/disabled choices.
 insert into public.journal_account_options (cafe_id, account_name, enabled)
 select c.id, a.account_name, true
 from public.cafes c
-cross join (values ('Cash'), ('UPI Account'), ('Sales'), ('Purchases'), ('Other Expenses')) as a(account_name)
+cross join (values ('Cash'), ('UPI Account'), ('Bank'), ('Sales'), ('Purchases'), ('Other Expenses')) as a(account_name)
 on conflict (cafe_id, account_name) do nothing;
 insert into public.journal_account_options (cafe_id, account_name, enabled)
 select distinct j.cafe_id, btrim(line.value ->> 'particulars'), true
@@ -321,6 +321,7 @@ begin
   values
     (new.id, 'Cash', true),
     (new.id, 'UPI Account', true),
+    (new.id, 'Bank', true),
     (new.id, 'Sales', true),
     (new.id, 'Purchases', true),
     (new.id, 'Other Expenses', true)

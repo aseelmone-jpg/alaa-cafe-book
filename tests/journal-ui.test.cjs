@@ -6,6 +6,8 @@ const vm = require('node:vm');
 const accounting = require('../public/accounting.js');
 
 const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+const accountDefaults = html.match(/const defaultJournalAccounts=(\[[^;]+\]);/);
+assert.ok(accountDefaults, 'Missing journal account choices');
 const uiFunctions = html.slice(
   html.indexOf('function render(){'),
   html.indexOf("$('#shopSelect').addEventListener('change',()=>{editingVoucherId"),
@@ -61,7 +63,7 @@ function createUi({ admin = true, shops } = {}) {
     signedInUser: { id: admin ? 'admin-1' : 'user-1', app_metadata: { role: admin ? 'admin' : 'user' } },
     activeCategoryView: 'Day Book',
     userFeatureAccess: { reportsPnl: true },
-    defaultJournalAccounts: ['Cash', 'UPI Account', 'Sales', 'Purchases', 'Other Expenses'],
+    defaultJournalAccounts: vm.runInNewContext(accountDefaults[1]),
     journalStorageReady: true,
     localStorage: { setItem() {} }, STORE_KEY: 'test-cafes',
     window: { alert: message => alerts.push(message), confirm: () => true },
@@ -96,6 +98,8 @@ function createUi({ admin = true, shops } = {}) {
   for (const prefix of [
     "document.querySelector('.tabs').addEventListener('click'",
     "$('#shopSelect').addEventListener('change',e=>",
+    "$('#journalLineRows').addEventListener('input',e=>",
+    "$('#journalLineRows').addEventListener('change',e=>",
     "$('#journalSave').addEventListener('click'",
     "$('#journalVoucherList').addEventListener('click'",
     'async function refreshCafeFromRealtime(',
@@ -110,6 +114,25 @@ function createUi({ admin = true, shops } = {}) {
     },
   };
 }
+
+test('reverse Bank to Cash choice switches both journal sides and saves the selected accounts', async () => {
+  const ui = createUi();
+  ui.selectTab('Journal Entry');
+  assert.match(ui.getNode('#journalLineRows').innerHTML, /<option value="Bank"\s*>Bank<\/option>/);
+  const rows = ui.getNode('#journalLineRows');
+  rows.handlers.change({ target: { dataset: { journalField: 'side', journalIndex: '0' }, value: 'credit' } });
+  assert.deepEqual(Array.from(ui.run('journalDraftLines.map(line=>line.side)')), ['credit', 'debit']);
+  for (const [index, account, side] of [[0, 'Bank', 'credit'], [1, 'Cash', 'debit']]) {
+    rows.handlers.change({ target: { dataset: { journalField: 'particulars', journalIndex: String(index) }, value: account } });
+    rows.handlers.input({ target: { dataset: { journalField: 'amount', journalIndex: String(index), journalSide: side }, value: '125.50' } });
+  }
+  await ui.getNode('#journalSave').handlers.click();
+  assert.deepEqual(ui.alerts, []);
+  assert.deepEqual(copy(ui.requests[0].payload.lines), [
+    { side: 'credit', particulars: 'Bank', amount: 125.50 },
+    { side: 'debit', particulars: 'Cash', amount: 125.50 },
+  ]);
+});
 
 test('leaving Journal Entry hides its form on every other section', () => {
   const ui = createUi();

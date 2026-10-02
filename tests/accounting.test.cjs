@@ -141,6 +141,39 @@ test('journal Debit/To subtracts and Credit/From adds to selected account balanc
   assert.equal(upiDay.journalCredit, 2);
 });
 
+test('Cash, UPI and Bank transfers work in both arrow directions', () => {
+  const pairs = [
+    ['UPI Account', 'Cash'], ['Cash', 'UPI Account'],
+    ['Bank', 'Cash'], ['Cash', 'Bank'],
+    ['UPI Account', 'Bank'], ['Bank', 'UPI Account'],
+  ];
+  for (const [first, second] of pairs) {
+    for (const [arrow, firstSide] of [['→', 'debit'], ['←', 'credit']]) {
+      const draft = accounting.journalLineSides([
+        { particulars: first, amount: 125.50 },
+        { particulars: second, amount: 125.50 },
+      ], firstSide);
+      assert.deepEqual(draft.map(line => line.side), firstSide === 'debit' ? ['debit', 'credit'] : ['credit', 'debit'], `${first} ${arrow} ${second}`);
+      assert.equal(accounting.validateVoucherLines(draft), '', `${first} ${arrow} ${second}`);
+      const voucher = { date: '2026-10-02', lines: draft };
+      const expectedFirst = firstSide === 'debit' ? -125.50 : 125.50;
+      const postings = accounting.voucherPostings([voucher]);
+      assert.deepEqual(postings.map(posting => [posting.account, posting.balanceChange]), [[first, expectedFirst], [second, -expectedFirst]], `${first} ${arrow} ${second}`);
+      const balances = Object.fromEntries(accounting.ledgers([], [voucher]).map(line => [line.account, line.balance * (line.side === 'Dr' ? 1 : -1)]));
+      assert.equal(balances[first], expectedFirst, `${first} ${arrow} ${second} first balance`);
+      assert.equal(balances[second], -expectedFirst, `${first} ${arrow} ${second} second balance`);
+      const cashPosting = postings.find(posting => posting.account === 'Cash');
+      const cashRows = accounting.dailyBalances([], [voucher]);
+      assert.equal(cashRows.at(-1)?.closing ?? 0, cashPosting?.balanceChange ?? 0, `${first} ${arrow} ${second} cash balance`);
+      const upiPosting = postings.find(posting => posting.account === 'UPI Account');
+      const upiRows = accounting.upiStatement([], [voucher]);
+      assert.equal(upiRows.at(-1)?.closing ?? 0, upiPosting?.balanceChange ?? 0, `${first} ${arrow} ${second} UPI balance`);
+      const totals = accounting.totals([], [voucher]);
+      assert.deepEqual([totals.sales, totals.purchases, totals.expenses], [0, 0, 0], `${first} ${arrow} ${second} profit and loss`);
+    }
+  }
+});
+
 test('summarizes debit and credit balances for each ledger account', () => {
   const ledgers = accounting.ledgers([
     { date: '2026-09-01', sale: 100, upi: 60, purchase: 10, otherExpense: 5 },
