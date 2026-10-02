@@ -46,6 +46,7 @@ where length(btrim(line.value ->> 'particulars')) > 120;
 select 'cafes' as table_name, count(*) as rows from public.cafes
 union all select 'cafe_members', count(*) from public.cafe_members
 union all select 'cafe_user_features', count(*) from public.cafe_user_features
+union all select 'day_entries', count(*) from public.day_entries
 union all select 'journal_vouchers', count(*) from public.journal_vouchers;
 
 -- Review current permissions, including any unexpected permissive policy before applying.

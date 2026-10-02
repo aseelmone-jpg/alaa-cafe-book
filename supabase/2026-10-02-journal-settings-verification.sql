@@ -1,6 +1,13 @@
 -- Read-only metadata checks after the focused migration is approved and applied.
 begin read only;
 
+-- Match these counts to the preflight to confirm business data was preserved.
+select 'cafes' as table_name, count(*) as rows from public.cafes
+union all select 'cafe_members', count(*) from public.cafe_members
+union all select 'cafe_user_features', count(*) from public.cafe_user_features
+union all select 'day_entries', count(*) from public.day_entries
+union all select 'journal_vouchers', count(*) from public.journal_vouchers;
+
 select c.relname as table_name, c.relrowsecurity as rls_enabled
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
 where n.nspname = 'public' and c.relname in ('cafes', 'cafe_members', 'cafe_user_features', 'day_entries', 'journal_vouchers', 'journal_account_options')
