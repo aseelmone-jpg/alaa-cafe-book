@@ -78,7 +78,7 @@ function createUi({ admin = true, shops } = {}) {
           const data = table === 'day_entries'
             ? shop.entries.map(entry => ({ entry_date: entry.date, sale: entry.sale, upi: entry.upi, purchase: entry.purchase, other_expense: entry.otherExpense, remarks: entry.remarks }))
             : table === 'journal_vouchers'
-              ? (shop.journalVouchers || []).map(voucher => ({ id: voucher.id, voucher_no: voucher.voucherNo, voucher_date: voucher.date, remark: voucher.remark, lines: copy(voucher.lines) }))
+              ? (shop.journalVouchers || []).map(voucher => ({ id: voucher.id, voucher_no: voucher.voucherNo, voucher_date: voucher.date, remark: voucher.remark, lines: copy(voucher.lines), voided_at: voucher.voidedAt || null, voided_by: voucher.voidedBy || null }))
               : shop.journalAccountOptions || [];
           return { data, error: null };
         };
@@ -86,10 +86,20 @@ function createUi({ admin = true, shops } = {}) {
           update(payload) { request.action = 'update'; request.payload = payload; return this; },
           insert(payload) { request.action = 'insert'; request.payload = payload; return this; },
           delete() { request.action = 'delete'; return this; },
-          eq() { return this; }, select() { return this; },
+          eq() { return this; }, is() { return this; }, select() { return this; },
           async order() { return readResult(); },
           then(resolve, reject) { return Promise.resolve(readResult()).then(resolve, reject); },
-          async single() { return { data: { id: 'voucher-1', ...copy(request.payload) }, error: null }; },
+          async single() {
+            const prior = shopData.shops.find(item => item.id === context.activeShopId).journalVouchers.find(item => item.id === 'voucher-1') || {};
+            const payload = request.payload || {};
+            return { data: {
+              id: 'voucher-1', voucher_no: payload.voucher_no ?? prior.voucherNo,
+              voucher_date: payload.voucher_date ?? prior.date, remark: payload.remark ?? prior.remark,
+              lines: payload.lines ? copy(payload.lines) : copy(prior.lines || []),
+              voided_at: Object.hasOwn(payload, 'voided_at') ? payload.voided_at : prior.voidedAt || null,
+              voided_by: Object.hasOwn(payload, 'voided_by') ? payload.voided_by : prior.voidedBy || null,
+            }, error: null };
+          },
         };
         return query;
       },
@@ -189,7 +199,7 @@ test('switching cafes refreshes the active P&L from that cafe data', () => {
   assert.equal(ui.getNode('#otherText').textContent, 'Sales ₹250 · Expenses ₹60 · Profit ₹190');
 });
 
-test('only admins see voucher deletion, and the user action handler still rejects it', async () => {
+test('only admins see voucher voiding, and the user action handler still rejects it', async () => {
   const voucher = { id: 'voucher-1', voucherNo: 1, date: '2026-10-01', lines: [{ side: 'debit', particulars: 'Cash', amount: 10 }, { side: 'credit', particulars: 'Sales', amount: 10 }] };
   for (const admin of [true, false]) {
     const ui = createUi({ admin, shops: [{ id: 'cafe-1', entries: [], journalVouchers: [voucher] }] });
@@ -198,7 +208,7 @@ test('only admins see voucher deletion, and the user action handler still reject
     assert.equal(ui.getNode('#journalVoucherList').innerHTML.includes('data-edit-voucher'), true);
     if (!admin) {
       await ui.getNode('#journalVoucherList').handlers.click({ target: { closest: selector => selector === '[data-delete-voucher]' ? { dataset: { deleteVoucher: 'voucher-1' } } : null } });
-      assert.deepEqual(ui.alerts, ['Only an admin can delete journal vouchers.']);
+      assert.deepEqual(ui.alerts, ['Only an admin can void journal vouchers.']);
       assert.equal(ui.requests.length, 0);
     }
   }
@@ -251,7 +261,7 @@ test('legacy UPI to Cash voucher keeps its old effect on unchanged save and adop
   assert.deepEqual(effective.map(p => [p.account, p.debit, p.credit]), [['Cash', 100, 0], ['UPI Account', 0, 100]]);
 });
 
-test('cancel, edit, reverse, and delete replace or remove the old dashboard effect', async () => {
+test('cancel, edit, reverse, and void replace or remove the old dashboard effect without deleting history', async () => {
   const ui = createUi();
   ui.selectTab('Journal Entry');
   const rows = ui.getNode('#journalLineRows');
@@ -278,8 +288,11 @@ test('cancel, edit, reverse, and delete replace or remove the old dashboard effe
   assert.equal(ui.getNode('#cashTotal').textContent, '₹-75');
   assert.equal(ui.getNode('#upiTotal').textContent, '₹75');
   await ui.getNode('#journalVoucherList').handlers.click({ target: { closest: selector => selector === '[data-delete-voucher]' ? { dataset: { deleteVoucher: 'voucher-1' } } : null } });
-  assert.equal(ui.requests.at(-1).action, 'delete');
-  assert.equal(ui.shopData.shops[0].journalVouchers.length, 0);
+  assert.equal(ui.requests.at(-1).action, 'update');
+  assert.ok(ui.requests.at(-1).payload.voided_at);
+  assert.equal(ui.shopData.shops[0].journalVouchers.length, 1);
+  assert.ok(ui.shopData.shops[0].journalVouchers[0].voidedAt);
+  assert.match(ui.getNode('#journalVoucherList').innerHTML, /VOID/);
   assert.equal(ui.getNode('#cashTotal').textContent, '₹0');
   assert.equal(ui.getNode('#upiTotal').textContent, '₹0');
 });

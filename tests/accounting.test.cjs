@@ -211,6 +211,17 @@ test('editing source, destination, or amount replaces rather than doubles the tr
   assert.deepEqual(net([saved, changed]), { Bank: 75, Cash: 25, 'UPI Account': -100 }, 'double counting occurs only if both vouchers are retained');
 });
 
+test('voided vouchers remain in history but do not affect accounting totals or balances', () => {
+  const voucher = { date: '2026-10-02', lines: [
+    { side: 'credit', particulars: 'UPI Account', amount: 100, transferRole: 'source' },
+    { side: 'debit', particulars: 'Cash', amount: 100, transferRole: 'destination' },
+  ] };
+  const voided = { ...voucher, voidedAt: '2026-10-02T12:00:00.000Z' };
+  assert.deepEqual(accounting.voucherPostings([voucher]).map(posting => posting.balanceChange), [-100, 100]);
+  assert.deepEqual(accounting.voucherPostings([voided]), []);
+  assert.deepEqual(accounting.totals([], [voided]), { sales: 0, upi: 0, purchases: 0, expenses: 0 });
+});
+
 test('summarizes debit and credit balances for each ledger account', () => {
   const ledgers = accounting.ledgers([
     { date: '2026-09-01', sale: 100, upi: 60, purchase: 10, otherExpense: 5 },

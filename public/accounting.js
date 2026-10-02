@@ -25,7 +25,7 @@
   }
 
   function voucherPostings(vouchers = []) {
-    return (Array.isArray(vouchers) ? vouchers : []).flatMap(voucher => {
+    return (Array.isArray(vouchers) ? vouchers : []).filter(voucher => !voucher.voidedAt && !voucher.voided_at).flatMap(voucher => {
       const legacyTransfer = isLegacyTransfer(voucher.lines);
       return (Array.isArray(voucher.lines) ? voucher.lines : []).flatMap(line => {
         const account = String(line.particulars || '').trim();
