@@ -85,6 +85,7 @@ function createUi({ admin = true, shops } = {}) {
         const query = {
           update(payload) { request.action = 'update'; request.payload = payload; return this; },
           insert(payload) { request.action = 'insert'; request.payload = payload; return this; },
+          delete() { request.action = 'delete'; return this; },
           eq() { return this; }, select() { return this; },
           async order() { return readResult(); },
           then(resolve, reject) { return Promise.resolve(readResult()).then(resolve, reject); },
@@ -102,6 +103,7 @@ function createUi({ admin = true, shops } = {}) {
     "$('#journalLineRows').addEventListener('change',e=>",
     "$('#journalSave').addEventListener('click'",
     "$('#journalVoucherList').addEventListener('click'",
+    "$('#journalReset').addEventListener('click'",
     'async function refreshCafeFromRealtime(',
   ]) vm.runInContext(listener(prefix), context, { filename: 'actual application listener' });
   return {
@@ -115,7 +117,7 @@ function createUi({ admin = true, shops } = {}) {
   };
 }
 
-test('reverse Bank to Cash choice switches both journal sides and saves the selected accounts', async () => {
+test('Bank to Cash selection records source and destination and updates the dashboard', async () => {
   const ui = createUi();
   ui.selectTab('Journal Entry');
   assert.match(ui.getNode('#journalLineRows').innerHTML, /<option value="Bank"\s*>Bank<\/option>/);
@@ -129,9 +131,31 @@ test('reverse Bank to Cash choice switches both journal sides and saves the sele
   await ui.getNode('#journalSave').handlers.click();
   assert.deepEqual(ui.alerts, []);
   assert.deepEqual(copy(ui.requests[0].payload.lines), [
-    { side: 'credit', particulars: 'Bank', amount: 125.50 },
-    { side: 'debit', particulars: 'Cash', amount: 125.50 },
+    { side: 'credit', particulars: 'Bank', amount: 125.50, transferRole: 'source' },
+    { side: 'debit', particulars: 'Cash', amount: 125.50, transferRole: 'destination' },
   ]);
+  assert.equal(ui.getNode('#cashTotal').textContent, '₹125.50');
+  assert.deepEqual(accounting.voucherPostings(ui.shopData.shops[0].journalVouchers).map(p => [p.account, p.balanceChange]), [['Bank', -125.50], ['Cash', 125.50]]);
+});
+
+test('UPI to Cash and Cash to UPI both update the dashboard immediately', async () => {
+  for (const [source, destination] of [['UPI Account', 'Cash'], ['Cash', 'UPI Account']]) {
+    const ui = createUi();
+    ui.selectTab('Journal Entry');
+    const rows = ui.getNode('#journalLineRows');
+    rows.handlers.change({ target: { dataset: { journalField: 'side', journalIndex: '0' }, value: 'credit' } });
+    for (const [index, account, side] of [[0, source, 'credit'], [1, destination, 'debit']]) {
+      rows.handlers.change({ target: { dataset: { journalField: 'particulars', journalIndex: String(index) }, value: account } });
+      rows.handlers.input({ target: { dataset: { journalField: 'amount', journalIndex: String(index), journalSide: side }, value: '100' } });
+    }
+    await ui.getNode('#journalSave').handlers.click();
+    assert.deepEqual(ui.alerts, []);
+    const postings = accounting.voucherPostings(ui.shopData.shops[0].journalVouchers);
+    assert.deepEqual(postings.map(p => [p.account, p.balanceChange]), [[source, -100], [destination, 100]]);
+    assert.equal(ui.getNode('#cashTotal').textContent, source === 'Cash' ? '₹-100' : '₹100');
+    assert.equal(ui.getNode('#upiTotal').textContent, source === 'UPI Account' ? '₹-100' : '₹100');
+    assert.deepEqual(accounting.totals([], ui.shopData.shops[0].journalVouchers), { sales: 0, upi: source === 'UPI Account' ? -100 : 100, purchases: 0, expenses: 0 });
+  }
 });
 
 test('leaving Journal Entry hides its form on every other section', () => {
@@ -200,6 +224,64 @@ test('actual voucher edit/save preserves stored sides and clears the successful 
     assert.equal(ui.run("journalDraftLines.every(line=>line.amount===''&&line.particulars==='')"), true);
     assert.equal(ui.getNode('#journalRemark').value, '');
   }
+});
+
+test('legacy UPI to Cash voucher keeps its old effect on unchanged save and adopts corrected roles when edited', async () => {
+  const lines = [{ side: 'credit', particulars: 'Cash', amount: 100 }, { side: 'debit', particulars: 'UPI Account', amount: 100 }];
+  const ui = createUi({ shops: [{ id: 'cafe-1', entries: [], journalVouchers: [{ id: 'voucher-1', voucherNo: 1, date: '2026-10-02', lines }] }] });
+  ui.selectTab('Journal Entry');
+  ui.run('loadJournalVoucher(currentShop().journalVouchers[0])');
+  assert.deepEqual(Array.from(ui.run('journalDraftLines.map(line=>line.side)')), ['debit', 'credit']);
+  await ui.getNode('#journalSave').handlers.click();
+  assert.deepEqual(copy(ui.requests[0].payload.lines), lines);
+  assert.equal(ui.getNode('#cashTotal').textContent, '₹100');
+  assert.equal(ui.getNode('#upiTotal').textContent, '₹-100');
+  ui.run('loadJournalVoucher(currentShop().journalVouchers[0])');
+  const rows = ui.getNode('#journalLineRows');
+  rows.handlers.input({ target: { dataset: { journalField: 'amount', journalIndex: '0', journalSide: 'debit' }, value: '150' } });
+  rows.handlers.input({ target: { dataset: { journalField: 'amount', journalIndex: '1', journalSide: 'credit' }, value: '150' } });
+  await ui.getNode('#journalSave').handlers.click();
+  assert.deepEqual(copy(ui.requests[1].payload.lines), [
+    { side: 'debit', particulars: 'Cash', amount: 150, transferRole: 'destination' },
+    { side: 'credit', particulars: 'UPI Account', amount: 150, transferRole: 'source' },
+  ]);
+  assert.equal(ui.getNode('#cashTotal').textContent, '₹150');
+  assert.equal(ui.getNode('#upiTotal').textContent, '₹-150');
+  const effective = accounting.voucherPostings([{ date: '2026-10-02', lines }]);
+  assert.deepEqual(effective.map(p => [p.account, p.debit, p.credit]), [['Cash', 100, 0], ['UPI Account', 0, 100]]);
+});
+
+test('cancel, edit, reverse, and delete replace or remove the old dashboard effect', async () => {
+  const ui = createUi();
+  ui.selectTab('Journal Entry');
+  const rows = ui.getNode('#journalLineRows');
+  rows.handlers.change({ target: { dataset: { journalField: 'side', journalIndex: '0' }, value: 'credit' } });
+  const fill = (source, destination, amount) => {
+    for (const [index, account, side] of [[0, source, 'credit'], [1, destination, 'debit']]) {
+      rows.handlers.change({ target: { dataset: { journalField: 'particulars', journalIndex: String(index) }, value: account } });
+      rows.handlers.input({ target: { dataset: { journalField: 'amount', journalIndex: String(index), journalSide: side }, value: String(amount) } });
+    }
+  };
+  fill('UPI Account', 'Cash', 100);
+  await ui.getNode('#journalSave').handlers.click();
+  assert.equal(ui.getNode('#cashTotal').textContent, '₹100');
+  assert.equal(ui.getNode('#upiTotal').textContent, '₹-100');
+  ui.run('loadJournalVoucher(currentShop().journalVouchers[0])');
+  fill('Cash', 'UPI Account', 75);
+  ui.getNode('#journalReset').handlers.click();
+  assert.deepEqual(Array.from(ui.run('journalDraftLines.map(line=>line.particulars)')), ['UPI Account', 'Cash']);
+  assert.equal(ui.getNode('#cashTotal').textContent, '₹100');
+  fill('Cash', 'UPI Account', 75);
+  await ui.getNode('#journalSave').handlers.click();
+  assert.equal(ui.requests.at(-1).action, 'update');
+  assert.equal(ui.shopData.shops[0].journalVouchers.length, 1);
+  assert.equal(ui.getNode('#cashTotal').textContent, '₹-75');
+  assert.equal(ui.getNode('#upiTotal').textContent, '₹75');
+  await ui.getNode('#journalVoucherList').handlers.click({ target: { closest: selector => selector === '[data-delete-voucher]' ? { dataset: { deleteVoucher: 'voucher-1' } } : null } });
+  assert.equal(ui.requests.at(-1).action, 'delete');
+  assert.equal(ui.shopData.shops[0].journalVouchers.length, 0);
+  assert.equal(ui.getNode('#cashTotal').textContent, '₹0');
+  assert.equal(ui.getNode('#upiTotal').textContent, '₹0');
 });
 
 test('rerender and realtime preserve unsaved voucher date and remark edits', async () => {

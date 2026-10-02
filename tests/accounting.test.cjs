@@ -95,6 +95,9 @@ test('journal voucher validation requires balanced, valid debit and credit lines
   assert.match(accounting.validateVoucherLines([...balanced.slice(0, 1), { ...balanced[1], amount: '125.49' }]), /equal/);
   assert.match(accounting.validateVoucherLines([{ ...balanced[0], amount: '0' }, balanced[1]]), /valid positive/);
   assert.match(accounting.validateVoucherLines([{ ...balanced[0], side: 'invalid' }, balanced[1]]), /Debit or Credit/);
+  assert.match(accounting.validateVoucherLines([{ side: 'debit', particulars: 'Cash', amount: 1 }, { side: 'credit', particulars: 'Cash', amount: 1 }]), /different source/);
+  assert.match(accounting.validateVoucherLines([{ side: 'debit', particulars: 'Cash', amount: 1, transferRole: 'source' }, { side: 'credit', particulars: 'UPI Account', amount: 1, transferRole: 'destination' }]), /source and destination must match/);
+  assert.match(accounting.validateVoucherLines([{ side: 'debit', particulars: 'Cash', amount: 1, transferRole: 'destination' }, { side: 'credit', particulars: 'UPI Account', amount: 1 }]), /must use Cash, UPI Account, or Bank/);
 });
 
 test('journal postings update the expected account balances and P&L totals', () => {
@@ -114,7 +117,7 @@ test('journal postings update the expected account balances and P&L totals', () 
   assert.deepEqual(balances.Sales, [185, 'Cr']);
 });
 
-test('journal Debit/To subtracts and Credit/From adds to selected account balances', () => {
+test('existing unmarked adjustment vouchers retain their original balance effects', () => {
   const entries = [{ date: '2026-09-30', sale: 100, upi: 40, purchase: 20, otherExpense: 5 }];
   const vouchers = [
     { date: '2026-09-30', lines: [{ side: 'debit', particulars: 'Cash', amount: 10 }, { side: 'credit', particulars: 'Sales', amount: 10 }] },
@@ -141,22 +144,23 @@ test('journal Debit/To subtracts and Credit/From adds to selected account balanc
   assert.equal(upiDay.journalCredit, 2);
 });
 
-test('Cash, UPI and Bank transfers work in both arrow directions', () => {
+test('Cash, UPI and Bank transfers work in both directions and reach dashboard balances', () => {
   const pairs = [
     ['UPI Account', 'Cash'], ['Cash', 'UPI Account'],
     ['Bank', 'Cash'], ['Cash', 'Bank'],
     ['UPI Account', 'Bank'], ['Bank', 'UPI Account'],
   ];
   for (const [first, second] of pairs) {
-    for (const [arrow, firstSide] of [['→', 'debit'], ['←', 'credit']]) {
+    for (const [arrow, firstSide] of [['→', 'credit'], ['←', 'debit']]) {
       const draft = accounting.journalLineSides([
         { particulars: first, amount: 125.50 },
         { particulars: second, amount: 125.50 },
       ], firstSide);
       assert.deepEqual(draft.map(line => line.side), firstSide === 'debit' ? ['debit', 'credit'] : ['credit', 'debit'], `${first} ${arrow} ${second}`);
       assert.equal(accounting.validateVoucherLines(draft), '', `${first} ${arrow} ${second}`);
-      const voucher = { date: '2026-10-02', lines: draft };
-      const expectedFirst = firstSide === 'debit' ? -125.50 : 125.50;
+      const voucher = { date: '2026-10-02', lines: accounting.voucherLinesForSave(draft) };
+      assert.deepEqual(voucher.lines.map(line => line.transferRole), firstSide === 'credit' ? ['source', 'destination'] : ['destination', 'source']);
+      const expectedFirst = firstSide === 'credit' ? -125.50 : 125.50;
       const postings = accounting.voucherPostings([voucher]);
       assert.deepEqual(postings.map(posting => [posting.account, posting.balanceChange]), [[first, expectedFirst], [second, -expectedFirst]], `${first} ${arrow} ${second}`);
       const balances = Object.fromEntries(accounting.ledgers([], [voucher]).map(line => [line.account, line.balance * (line.side === 'Dr' ? 1 : -1)]));
@@ -170,8 +174,41 @@ test('Cash, UPI and Bank transfers work in both arrow directions', () => {
       assert.equal(upiRows.at(-1)?.closing ?? 0, upiPosting?.balanceChange ?? 0, `${first} ${arrow} ${second} UPI balance`);
       const totals = accounting.totals([], [voucher]);
       assert.deepEqual([totals.sales, totals.purchases, totals.expenses], [0, 0, 0], `${first} ${arrow} ${second} profit and loss`);
+      assert.equal(totals.upi, upiPosting?.balanceChange ?? 0, `${first} ${arrow} ${second} dashboard UPI`);
     }
   }
+});
+
+test('an existing legacy transfer retains its effect and saved sides on unchanged edit', () => {
+  const oldLines = [
+    { side: 'credit', particulars: 'Cash', amount: 100 },
+    { side: 'debit', particulars: 'UPI Account', amount: 100 },
+  ];
+  const original = { date: '2026-10-02', lines: oldLines };
+  assert.deepEqual(accounting.voucherPostings([original]).map(p => [p.account, p.balanceChange]), [['Cash', 100], ['UPI Account', -100]]);
+  const draft = accounting.voucherLinesForEdit(oldLines);
+  assert.deepEqual(draft.map(line => line.side), ['debit', 'credit']);
+  assert.deepEqual(accounting.voucherLinesForSave(draft, oldLines), oldLines);
+  const edited = { date: '2026-10-02', lines: accounting.voucherLinesForSave(draft.map(line => ({ ...line, amount: 125 })), oldLines) };
+  assert.deepEqual(edited.lines.map(line => line.transferRole), ['destination', 'source']);
+  assert.deepEqual(accounting.voucherPostings([edited]).map(p => [p.account, p.balanceChange]), [['Cash', 125], ['UPI Account', -125]]);
+  assert.deepEqual(accounting.voucherPostings([original]).map(p => p.balanceChange), [100, -100], 'editing never mutates the old voucher');
+});
+
+test('editing source, destination, or amount replaces rather than doubles the transfer', () => {
+  const saved = { date: '2026-10-02', lines: accounting.voucherLinesForSave([
+    { side: 'credit', particulars: 'UPI Account', amount: 100 },
+    { side: 'debit', particulars: 'Cash', amount: 100 },
+  ]) };
+  const changed = { date: '2026-10-02', lines: accounting.voucherLinesForSave([
+    { side: 'credit', particulars: 'Cash', amount: 75 },
+    { side: 'debit', particulars: 'Bank', amount: 75 },
+  ], saved.lines) };
+  const net = vouchers => Object.fromEntries(accounting.ledgers([], vouchers).map(row => [row.account, row.balance * (row.side === 'Dr' ? 1 : -1)]));
+  assert.deepEqual(net([saved]), { Cash: 100, 'UPI Account': -100 });
+  assert.deepEqual(net([changed]), { Bank: 75, Cash: -75 });
+  assert.deepEqual(net([]), {}, 'deleting the voucher removes both effects');
+  assert.deepEqual(net([saved, changed]), { Bank: 75, Cash: 25, 'UPI Account': -100 }, 'double counting occurs only if both vouchers are retained');
 });
 
 test('summarizes debit and credit balances for each ledger account', () => {

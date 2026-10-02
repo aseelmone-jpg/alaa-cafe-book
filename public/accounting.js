@@ -7,6 +7,11 @@
     const number = Number(value || 0);
     return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
   };
+  const transferAccounts = new Set(['Cash', 'UPI Account', 'Bank']);
+  const isTransfer = lines => Array.isArray(lines) && lines.length >= 2 &&
+    lines.every(line => transferAccounts.has(String(line.particulars || '').trim())) &&
+    new Set(lines.map(line => String(line.particulars || '').trim())).size >= 2;
+  const isLegacyTransfer = lines => isTransfer(lines) && lines.every(line => !line.transferRole);
 
   function validateEntry(entry) {
     for (const [label, value] of [['Sale', entry.sale], ['Google Pay (UPI)', entry.upi], ['Purchase', entry.purchase], ['Other expenses', entry.otherExpense]]) {
@@ -20,16 +25,21 @@
   }
 
   function voucherPostings(vouchers = []) {
-    return (Array.isArray(vouchers) ? vouchers : []).flatMap(voucher =>
-      (Array.isArray(voucher.lines) ? voucher.lines : []).flatMap(line => {
+    return (Array.isArray(vouchers) ? vouchers : []).flatMap(voucher => {
+      const legacyTransfer = isLegacyTransfer(voucher.lines);
+      return (Array.isArray(voucher.lines) ? voucher.lines : []).flatMap(line => {
         const account = String(line.particulars || '').trim();
         const value = amount(line.amount);
         if (!account || value <= 0 || !['debit', 'credit'].includes(line.side)) return [];
-        const debit = line.side === 'debit' ? value : 0;
-        const credit = line.side === 'credit' ? value : 0;
-        return [{ date: voucher.date || voucher.voucher_date || '', account, debit, credit, balanceChange: amount(credit - debit), remark: voucher.remark || '', voucherNo: voucher.voucherNo ?? voucher.voucher_no ?? '' }];
-      })
-    );
+        // Older fund transfers used opposite stored sides; keep their effect while
+        // showing the effective debit/credit in ledgers and account statements.
+        const effectiveSide = legacyTransfer ? (line.side === 'debit' ? 'credit' : 'debit') : line.side;
+        const debit = effectiveSide === 'debit' ? value : 0;
+        const credit = effectiveSide === 'credit' ? value : 0;
+        const balanceChange = line.transferRole === 'source' ? -value : line.transferRole === 'destination' ? value : legacyTransfer ? debit - credit : credit - debit;
+        return [{ date: voucher.date || voucher.voucher_date || '', account, debit, credit, balanceChange: amount(balanceChange), remark: voucher.remark || '', voucherNo: voucher.voucherNo ?? voucher.voucher_no ?? '' }];
+      });
+    });
   }
 
   function dailyBalances(entries, vouchers = []) {
@@ -143,8 +153,12 @@
       if (!['debit', 'credit'].includes(line.side)) return 'Every item must be marked Debit or Credit.';
       if (!String(line.particulars || '').trim()) return 'Select an account for every item.';
       if (!Number.isFinite(value) || value <= 0 || Math.abs(Math.round(value * 100) - value * 100) > 1e-7 || value > 9999999999.99) return 'Every item needs a valid positive amount with up to two decimal places.';
+      if (line.transferRole && !['source', 'destination'].includes(line.transferRole)) return 'Every transfer item needs a valid source or destination.';
+      if (line.transferRole && line.transferRole !== (line.side === 'credit' ? 'source' : 'destination')) return 'Transfer source and destination must match Credit / From and Debit / To.';
       if (line.side === 'debit') debit = amount(debit + value); else credit = amount(credit + value);
     }
+    if (lines.some(line => line.transferRole) && (!isTransfer(lines) || lines.some(line => !line.transferRole))) return 'A transfer must use Cash, UPI Account, or Bank for both source and destination.';
+    if (lines.length === 2 && lines.every(line => transferAccounts.has(String(line.particulars || '').trim())) && !isTransfer(lines)) return 'Choose different source and destination accounts.';
     return debit > 0 && debit === credit ? '' : 'Debit and credit totals must be equal and greater than zero.';
   }
 
@@ -158,12 +172,25 @@
     }));
   }
 
-  function voucherLinesForSave(lines) {
+  function voucherLinesForEdit(lines) {
+    const legacyTransfer = isLegacyTransfer(lines);
     return (Array.isArray(lines) ? lines : []).map(line => ({
+      ...line,
+      side: legacyTransfer ? (line.side === 'debit' ? 'credit' : 'debit') : line.side,
+    }));
+  }
+
+  function voucherLinesForSave(lines, previousLines = []) {
+    const cleaned = (Array.isArray(lines) ? lines : []).map(line => ({
       side: line.side,
       particulars: String(line.particulars || '').trim(),
       amount: Number(line.amount),
     }));
+    // An unchanged edit must not rewrite a historical voucher's stored sides.
+    if (isLegacyTransfer(previousLines) && JSON.stringify(cleaned) === JSON.stringify(voucherLinesForEdit(previousLines).map(line => ({ side: line.side, particulars: String(line.particulars || '').trim(), amount: Number(line.amount) })))) {
+      return previousLines.map(line => ({ ...line }));
+    }
+    return isTransfer(cleaned) ? cleaned.map(line => ({ ...line, transferRole: line.side === 'credit' ? 'source' : 'destination' })) : cleaned;
   }
 
   function formatMoney(value) {
@@ -171,5 +198,5 @@
     return '₹' + number.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(number) ? 0 : 2, maximumFractionDigits: 2 });
   }
 
-  return { amount, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, validateVoucherLines, journalLineSides, voucherLinesForSave, formatMoney };
+  return { amount, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, validateVoucherLines, journalLineSides, voucherLinesForEdit, voucherLinesForSave, formatMoney };
 });
