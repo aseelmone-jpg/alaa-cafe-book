@@ -86,17 +86,35 @@ drop policy if exists "Users read their cafe feature settings" on public.cafe_us
 drop policy if exists "Admins manage cafe feature settings" on public.cafe_user_features;
 create policy "Users read their cafe feature settings" on public.cafe_user_features
   for select to authenticated using (user_id = (select auth.uid()));
+
+-- The member table intentionally exposes only the signed-in user's memberships.
+-- Check the target staff membership without expanding that table's read access.
+create or replace function public.admin_can_manage_cafe_user(p_cafe_id uuid, p_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $function$
+  select coalesce(auth.jwt() -> 'app_metadata' ->> 'role', '') = 'admin'
+    and exists (
+      select 1 from public.cafes c
+      where c.id = p_cafe_id and c.owner_id = (select auth.uid())
+    ) and exists (
+      select 1 from public.cafe_members m
+      where m.cafe_id = p_cafe_id and m.user_id = p_user_id
+    );
+$function$;
+revoke all on function public.admin_can_manage_cafe_user(uuid, uuid) from public, anon;
+grant execute on function public.admin_can_manage_cafe_user(uuid, uuid) to authenticated;
+
 create policy "Admins manage cafe feature settings" on public.cafe_user_features
   for all to authenticated using (
     (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin' and exists (
       select 1 from public.cafes c where c.id = cafe_user_features.cafe_id and c.owner_id = (select auth.uid())
     )
   ) with check (
-    (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin' and exists (
-      select 1 from public.cafes c where c.id = cafe_user_features.cafe_id and c.owner_id = (select auth.uid())
-    ) and exists (
-      select 1 from public.cafe_members m where m.cafe_id = cafe_user_features.cafe_id and m.user_id = cafe_user_features.user_id
-    )
+    public.admin_can_manage_cafe_user(cafe_id, user_id)
   );
 
 create or replace function public.admin_list_cafe_users(p_cafe_id uuid)
@@ -221,10 +239,17 @@ exception when others then
   return false;
 end;
 $function$;
+revoke all on function public.journal_lines_are_balanced(jsonb) from public, anon;
 grant execute on function public.journal_lines_are_balanced(jsonb) to authenticated;
 
 do $journal_check$
 begin
+  if exists (
+    select 1 from public.journal_vouchers
+    where public.journal_lines_are_balanced(lines) is not true
+  ) then
+    raise exception 'Existing journal vouchers have invalid or unbalanced lines; schema changes rolled back';
+  end if;
   if not exists (
     select 1 from pg_constraint
     where conrelid = 'public.journal_vouchers'::regclass
@@ -236,6 +261,7 @@ begin
   end if;
 end
 $journal_check$;
+alter table public.journal_vouchers validate constraint journal_vouchers_lines_balanced;
 
 -- This table only controls which existing account names can be picked in new vouchers.
 -- Disabling an option never deletes the account name or any historical voucher lines.
@@ -266,6 +292,7 @@ create policy "Admins manage journal account options" on public.journal_account_
       select 1 from public.cafes c where c.id = journal_account_options.cafe_id and c.owner_id = (select auth.uid())
     )
   );
+revoke all on public.journal_account_options from public, anon, authenticated;
 grant select, insert, update on public.journal_account_options to authenticated;
 
 -- Seed only account names already used by the current day-book posting logic, plus
@@ -337,8 +364,8 @@ begin
   return new;
 end;
 $function$;
-revoke all on function public.seed_journal_accounts_for_cafe() from public, authenticated;
-revoke all on function public.enforce_journal_account_options() from public, authenticated;
+revoke all on function public.seed_journal_accounts_for_cafe() from public, anon, authenticated;
+revoke all on function public.enforce_journal_account_options() from public, anon, authenticated;
 drop trigger if exists enforce_journal_account_options on public.journal_vouchers;
 create trigger enforce_journal_account_options
   before insert or update on public.journal_vouchers
