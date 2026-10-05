@@ -62,7 +62,8 @@ function createUi({ admin = true, shops } = {}) {
     isAdmin: () => context.signedInUser?.app_metadata?.role === 'admin',
     signedInUser: { id: admin ? 'admin-1' : 'user-1', app_metadata: { role: admin ? 'admin' : 'user' } },
     activeCategoryView: 'Day Book',
-    userFeatureAccess: { reportsPnl: true },
+    userFeatureAccess: { reportsPnl: true, addCafe: false, manageAccounts: false },
+    featureAccessCafeId: 'cafe-1',
     defaultJournalAccounts: vm.runInNewContext(accountDefaults[1]),
     journalStorageReady: true,
     localStorage: { setItem() {} }, STORE_KEY: 'test-cafes',
@@ -105,6 +106,7 @@ function createUi({ admin = true, shops } = {}) {
       },
     },
   });
+  vm.runInContext(listener('function canUseManagementFeature('), context);
   vm.runInContext(uiFunctions, context, { filename: 'actual journal UI functions' });
   for (const prefix of [
     "document.querySelector('.tabs').addEventListener('click'",
@@ -314,4 +316,28 @@ test('rerender and realtime preserve unsaved voucher date and remark edits', asy
     assert.equal(ui.getNode('#voucherDate').value, date);
     assert.equal(ui.getNode('#journalRemark').value, remark);
   }
+});
+
+
+test('delegated management actions require an explicit true flag for the current cafe', () => {
+  const ui = createUi({ admin: false });
+  assert.equal(ui.run("canUseManagementFeature('addCafe')"), false);
+  assert.equal(ui.run("canUseManagementFeature('manageAccounts')"), false);
+  ui.context.userFeatureAccess.addCafe = true;
+  ui.context.userFeatureAccess.manageAccounts = true;
+  assert.equal(ui.run("canUseManagementFeature('addCafe')"), true);
+  assert.equal(ui.run("canUseManagementFeature('manageAccounts')"), true);
+  ui.context.featureAccessCafeId = 'another-cafe';
+  assert.equal(ui.run("canUseManagementFeature('addCafe')"), false);
+  assert.equal(ui.run("canUseManagementFeature('manageAccounts')"), false);
+  ui.context.featureAccessCafeId = 'cafe-1';
+  ui.context.userFeatureAccess.addCafe = 'true';
+  assert.equal(ui.run("canUseManagementFeature('addCafe')"), false);
+  ui.context.signedInUser = null;
+  assert.equal(ui.run("canUseManagementFeature('manageAccounts')"), false);
+});
+test('admin management access stays enabled', () => {
+  const ui = createUi();
+  assert.equal(ui.run("canUseManagementFeature('addCafe')"), true);
+  assert.equal(ui.run("canUseManagementFeature('manageAccounts')"), true);
 });
