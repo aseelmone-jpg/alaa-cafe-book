@@ -36,7 +36,10 @@
         const effectiveSide = legacyTransfer ? (line.side === 'debit' ? 'credit' : 'debit') : line.side;
         const debit = effectiveSide === 'debit' ? value : 0;
         const credit = effectiveSide === 'credit' ? value : 0;
-        const balanceChange = line.transferRole === 'source' ? -value : line.transferRole === 'destination' ? value : legacyTransfer ? debit - credit : credit - debit;
+        const normalDebit = ['Cash', 'UPI Account', 'Bank', 'Purchases', 'Other Expenses', 'Expenses'].includes(account);
+        // Unknown historical accounts retain their existing convention; no account types are invented.
+        const normalChange = normalDebit ? debit - credit : credit - debit;
+        const balanceChange = line.transferRole === 'source' ? -value : line.transferRole === 'destination' ? value : legacyTransfer ? debit - credit : line.postingRule === 'account-normal-v1' ? normalChange : credit - debit;
         return [{ date: voucher.date || voucher.voucher_date || '', account, debit, credit, balanceChange: amount(balanceChange), remark: voucher.remark || '', voucherNo: voucher.voucherNo ?? voucher.voucher_no ?? '' }];
       });
     });
@@ -180,17 +183,22 @@
     }));
   }
 
-  function voucherLinesForSave(lines, previousLines = []) {
+  function voucherNeedsPostingReview(lines) {
+    return Array.isArray(lines) && lines.length >= 2 && !isTransfer(lines) &&
+      lines.every(line => !line.transferRole && !line.postingRule);
+  }
+
+  function voucherLinesForSave(lines, previousLines = [], applyCorrectedRule = false) {
     const cleaned = (Array.isArray(lines) ? lines : []).map(line => ({
       side: line.side,
       particulars: String(line.particulars || '').trim(),
       amount: Number(line.amount),
     }));
     // An unchanged edit must not rewrite a historical voucher's stored sides.
-    if (isLegacyTransfer(previousLines) && JSON.stringify(cleaned) === JSON.stringify(voucherLinesForEdit(previousLines).map(line => ({ side: line.side, particulars: String(line.particulars || '').trim(), amount: Number(line.amount) })))) {
+    if (!(applyCorrectedRule && voucherNeedsPostingReview(previousLines)) && previousLines.length && JSON.stringify(cleaned) === JSON.stringify(voucherLinesForEdit(previousLines).map(line => ({ side: line.side, particulars: String(line.particulars || '').trim(), amount: Number(line.amount) })))) {
       return previousLines.map(line => ({ ...line }));
     }
-    return isTransfer(cleaned) ? cleaned.map(line => ({ ...line, transferRole: line.side === 'credit' ? 'source' : 'destination' })) : cleaned;
+    return isTransfer(cleaned) ? cleaned.map(line => ({ ...line, transferRole: line.side === 'credit' ? 'source' : 'destination' })) : cleaned.map(line => ({ ...line, postingRule: 'account-normal-v1' }));
   }
 
   function formatMoney(value) {
@@ -198,5 +206,5 @@
     return '₹' + number.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(number) ? 0 : 2, maximumFractionDigits: 2 });
   }
 
-  return { amount, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, validateVoucherLines, journalLineSides, voucherLinesForEdit, voucherLinesForSave, formatMoney };
+  return { amount, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, validateVoucherLines, journalLineSides, voucherLinesForEdit, voucherNeedsPostingReview, voucherLinesForSave, formatMoney };
 });
