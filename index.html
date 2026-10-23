@@ -250,22 +250,25 @@ async function loadCloud(){
       if(result.error)throw new Error('Could not load cafes: '+result.error.message);
       cafes=result.data||[];
     }
-    journalAccountsReady=true;const loaded=[];
-    for(const cafe of cafes){
-      let accountOptions=[];
-      const optionResult=await supabaseClient.from('journal_account_options').select('account_name,enabled').eq('cafe_id',cafe.id);
-      if(optionResult.error)journalAccountsReady=false;else accountOptions=optionResult.data||[];
-      const entryResult=await supabaseClient.from('day_entries').select('*').eq('cafe_id',cafe.id).is('voided_at',null).order('entry_date');
-      if(!sessionStillActive())return false;
+    journalAccountsReady=true;
+    const loaded=await Promise.all(cafes.map(async cafe=>{
+      const loadVouchers=journalStorageReady;
+      const [optionResult,entryResult,voucherResult]=await Promise.all([
+        supabaseClient.from('journal_account_options').select('account_name,enabled').eq('cafe_id',cafe.id),
+        supabaseClient.from('day_entries').select('*').eq('cafe_id',cafe.id).is('voided_at',null).order('entry_date'),
+        loadVouchers
+          ?supabaseClient.from('journal_vouchers').select('*').eq('cafe_id',cafe.id).order('voucher_no')
+          :Promise.resolve({data:[],error:null})
+      ]);
+      if(!sessionStillActive())return null;
       if(entryResult.error)throw new Error('Could not load day entries: '+entryResult.error.message);
-      let vouchers=[];
-      if(journalStorageReady){
-        const voucherResult=await supabaseClient.from('journal_vouchers').select('*').eq('cafe_id',cafe.id).order('voucher_no');
-        if(!sessionStillActive())return false;
-        if(voucherResult.error)journalStorageReady=false;else vouchers=voucherResult.data||[];
-      }
-      loaded.push({...cafe,archivedAt:cafe.archived_at||null,archivedBy:cafe.archived_by||null,entries:entryResult.data.map(row=>({date:row.entry_date,sale:row.sale,upi:row.upi,purchase:row.purchase,otherExpense:row.other_expense,remarks:row.remarks||''})),journalVouchers:vouchers.map(voucher=>({id:voucher.id,updatedAt:voucher.updated_at,voucherNo:voucher.voucher_no,date:voucher.voucher_date,remark:voucher.remark||'',lines:voucher.lines||[],voidedAt:voucher.voided_at||null,voidedBy:voucher.voided_by||null})),journalAccountOptions:accountOptions});
-    }
+      if(optionResult.error)journalAccountsReady=false;
+      if(loadVouchers&&voucherResult.error)journalStorageReady=false;
+      const vouchers=loadVouchers&&!voucherResult.error?voucherResult.data||[]:[];
+      const accountOptions=optionResult.error?[]:optionResult.data||[];
+      return {...cafe,archivedAt:cafe.archived_at||null,archivedBy:cafe.archived_by||null,entries:entryResult.data.map(row=>({date:row.entry_date,sale:row.sale,upi:row.upi,purchase:row.purchase,otherExpense:row.other_expense,remarks:row.remarks||''})),journalVouchers:vouchers.map(voucher=>({id:voucher.id,updatedAt:voucher.updated_at,voucherNo:voucher.voucher_no,date:voucher.voucher_date,remark:voucher.remark||'',lines:voucher.lines||[],voidedAt:voucher.voided_at||null,voidedBy:voucher.voided_by||null})),journalAccountOptions:accountOptions};
+    }));
+    if(!sessionStillActive())return false;
     if(!loaded.length)throw new Error('No active cafes are available for this account. Ask your admin to assign a cafe.');
     shopData.shops=loaded;activeShopId=loaded.some(shop=>shop.id===shopData.activeId)?shopData.activeId:loaded[0].id;entries=currentShop().entries;updateShopUI();render();
     await loadUserFeatureAccess();if(!sessionStillActive())return false;setRoleAccess();syncEntryForm();
