@@ -1019,7 +1019,9 @@ begin
  if p_upi>p_sale then raise exception 'UPI cannot exceed sales' using errcode='22023'; end if;
  select owner_id into cafe_owner from public.cafes where id=p_cafe_id and archived_at is null for share;
  if cafe_owner is null then raise exception 'Cafe is unavailable' using errcode='42501'; end if;
- perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_cafe_id::text||':day:'||p_entry_date::text,0));
+ if not pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(p_cafe_id::text||':day:'||p_entry_date::text,0)) then
+  raise exception 'A save for this date is already processing. Check the date before trying again.' using errcode='55P03';
+ end if;
  select * into saved from public.day_entries where cafe_id=p_cafe_id and entry_date=p_entry_date for update;
  if found then
   if p_expected_updated_at is null and saved.voided_at is null and saved.sale=p_sale and saved.upi=p_upi and saved.purchase=p_purchase and saved.other_expense=p_other_expense and saved.remarks=p_remarks then return saved; end if;

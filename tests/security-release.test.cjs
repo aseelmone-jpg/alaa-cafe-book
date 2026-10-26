@@ -65,6 +65,13 @@ test('checked journal SQL specifies idempotent creates and rejects stale edits',
  // This is a source regression check; executing PostgreSQL is a separate integration requirement.
 });
 
+test('Day Book save lock fails fast and keeps the same-date row lock key',()=>{
+ const sql=read('supabase/2026-10-26-daybook-save-lock-guard.sql');
+ assert.match(sql,/pg_try_advisory_xact_lock\(pg_catalog\.hashtextextended\(p_cafe_id::text\|\|':day:'\|\|p_entry_date::text,0\)\)/);
+ assert.match(sql,/using errcode='55P03'/);
+ assert.match(sql,/for update/);
+});
+
 test('installation manifest icons exist with their declared dimensions',()=>{
  const manifest=JSON.parse(read('public/manifest.webmanifest'));assert.equal(manifest.short_name,'ALAA CAFE');
  for(const icon of manifest.icons){const png=fs.readFileSync(path.join(root,'public',icon.src));

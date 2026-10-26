@@ -157,10 +157,34 @@ for (const [name, file, checkedSave] of variants) {
     assert.equal(h.node('#sale').value, '100');
     assert.match(h.alerts[0], /could not confirm/i);
   });
+
+  test(`${name}: busy date lock verifies a completed save before showing an error`, async () => {
+    const h = harness(file, checkedSave);
+    h.fill();
+    h.context.saveError = { message: 'A save for this date is already processing', code: '55P03' };
+    h.context.verifyRow = { id: 'entry-1', updated_at: 'stored-version', entry_date: '2026-10-21', sale: 100, upi: 30, purchase: 20, other_expense: 10, remarks: 'staff tea', voided_at: null };
+    await h.submit();
+    assert.equal(h.requests.filter(request => request.name === 'save_day_entry_checked').length, 1);
+    assert.equal(h.requests.filter(request => request.type === 'verify').length, 1);
+    assert.equal(h.node('#date').value, '');
+    assert.match(h.node('#authMessage').textContent, /saved and verified/i);
+    assert.equal(h.alerts.length, 0);
+  });
+
+  test(`${name}: busy date lock without a matching row preserves the draft`, async () => {
+    const h = harness(file, checkedSave);
+    h.fill();
+    h.context.saveError = { message: 'A save for this date is already processing', code: '55P03' };
+    await h.submit();
+    assert.equal(h.requests.filter(request => request.name === 'save_day_entry_checked').length, 1);
+    assert.equal(h.requests.filter(request => request.type === 'verify').length, 1);
+    assert.equal(h.node('#date').value, '2026-10-21');
+    assert.equal(h.node('#sale').value, '100');
+    assert.match(h.alerts[0], /another save.*processing/i);
+  });
 }
 
 test('local root and public HTML match exactly', () => {
   assert.ok(fs.readFileSync(path.join(root, 'index.html')).equals(fs.readFileSync(path.join(root, 'public/index.html'))));
 });
-
 
