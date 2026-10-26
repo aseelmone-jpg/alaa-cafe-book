@@ -27,7 +27,7 @@ function harness(file, checkedSave, priorEntries = []) {
   const shop = { id: 'cafe-1', owner_id: 'owner-1', entries: priorEntries };
   const requests = [], alerts = [];
   const context = vm.createContext({
-    $, Date, entries: shop.entries, dayDraftDirty: false, dayDraftVersion: null,
+    $, Date, entries: shop.entries, dayDraftDirty: false, dayDraftVersion: null, daySaveInFlight: false,
     signedInUser: { id: 'owner-1' }, currentShop: () => shop,
     accountingWritesBlocked: () => false, canUseFeature: () => true,
     realtimeReadSequence: 0, dayRow: row => ({ date: row.entry_date, sale: row.sale, upi: row.upi, purchase: row.purchase, otherExpense: row.other_expense, remarks: row.remarks, updatedAt: row.updated_at }),
@@ -36,18 +36,24 @@ function harness(file, checkedSave, priorEntries = []) {
     supabaseClient: {
       async rpc(name, payload) {
         requests.push({ name, payload });
-        if (context.saveError) return { error: { message: 'Network error' } };
+        if (context.saveError) return { error: typeof context.saveError === 'object' ? context.saveError : { message: 'Network error' } };
         return { data: { entry_date: payload.p_entry_date, sale: payload.p_sale, upi: payload.p_upi, purchase: payload.p_purchase, other_expense: payload.p_other_expense, remarks: payload.p_remarks, updated_at: 'new-version' }, error: null };
       },
       from(table) {
         assert.equal(table, 'day_entries');
-        return { async upsert(payload) { requests.push({ table, payload }); return context.saveError ? { error: { message: 'Network error' } } : { error: null }; } };
+        const query = {
+          select() { return this; },
+          eq() { return this; },
+          async maybeSingle() { requests.push({ table, type: 'verify' }); return { data: context.verifyRow || null, error: context.verifyError || null }; },
+          async upsert(payload) { requests.push({ table, payload }); return context.saveError ? { error: { message: 'Network error' } } : { error: null }; },
+        };
+        return query;
       },
     },
   });
   function $(selector) { return node(selector); }
   vm.runInContext(source([
-    'function dayDateDisplay(', 'function dayDateIso(', 'function resetDayEntryForm(', 'function syncEntryForm(',
+    'function dayDateDisplay(', 'function dayDateIso(', 'function resetDayEntryForm(', 'function syncEntryForm(', 'function matchesDayEntry(',
     "$('#dayDateText').addEventListener('input'", "$('#date').addEventListener('change'", "$('#entryForm').addEventListener('submit'",
   ]), context);
   const fill = (date = '2026-10-21') => {
@@ -112,21 +118,49 @@ for (const [name, file, checkedSave] of variants) {
     if (checkedSave) assert.equal(h.context.dayDraftVersion, null);
   });
 
-  test(`${name}: failed save leaves date and amounts for retry`, async () => {
+  test(`${name}: definite save error leaves date and amounts in the form`, async () => {
     const h = harness(file, checkedSave);
     h.fill();
-    h.context.saveError = true;
+    h.context.saveError = { message: 'Validation failed', code: '22023', status: 400 };
     await h.submit();
     assert.equal(h.requests.length, 1);
     assert.equal(h.node('#date').value, '2026-10-21');
     assert.equal(h.node('#dayDateText').value, '21/10/2026');
     assert.equal(h.node('#sale').value, '100');
     assert.equal(h.node('#remarks').value, 'staff tea');
-    assert.match(h.alerts[0], /Network error/);
+    assert.match(h.alerts[0], /Validation failed/);
+  });
+
+  test(`${name}: timed out save is confirmed from the stored row without retrying`, async () => {
+    const h = harness(file, checkedSave);
+    h.fill();
+    h.context.saveError = { message: 'upstream request timeout', status: 504 };
+    h.context.verifyRow = { id: 'entry-1', updated_at: 'stored-version', entry_date: '2026-10-21', sale: 100, upi: 30, purchase: 20, other_expense: 10, remarks: 'staff tea', voided_at: null };
+    await h.submit();
+    assert.equal(h.requests.filter(request => request.name === 'save_day_entry_checked').length, 1);
+    assert.equal(h.requests.filter(request => request.type === 'verify').length, 1);
+    assert.equal(h.shop.entries.length, 1);
+    assert.equal(h.node('#date').value, '');
+    assert.equal(h.node('#sale').value, 0);
+    assert.match(h.node('#authMessage').textContent, /saved.*verified/i);
+    assert.equal(h.alerts.length, 0);
+  });
+
+  test(`${name}: timed out save with unknown status keeps the draft and warns against retrying`, async () => {
+    const h = harness(file, checkedSave);
+    h.fill();
+    h.context.saveError = { message: 'upstream request timeout', status: 504 };
+    await h.submit();
+    assert.equal(h.requests.filter(request => request.name === 'save_day_entry_checked').length, 1);
+    assert.equal(h.requests.filter(request => request.type === 'verify').length, 1);
+    assert.equal(h.node('#date').value, '2026-10-21');
+    assert.equal(h.node('#sale').value, '100');
+    assert.match(h.alerts[0], /could not confirm/i);
   });
 }
 
 test('local root and public HTML match exactly', () => {
   assert.ok(fs.readFileSync(path.join(root, 'index.html')).equals(fs.readFileSync(path.join(root, 'public/index.html'))));
 });
+
 
