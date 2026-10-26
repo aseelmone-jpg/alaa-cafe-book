@@ -434,10 +434,11 @@ async function loadNotifications(offset=0){
  if(signedInUser!==user||sequence!==notificationSequence||!$('#notificationsDialog').open)return;
  if(result.error){$('#notificationMessage').textContent='Could not load notifications: '+result.error.message;return}
  const rows=result.data||[];notificationRows=rows.slice(0,50);
- $('#notificationRows').innerHTML=notificationRows.map(row=>'<article class="access-notification"><p>'+escapeText(row.message)+'</p><small>'+escapeText(new Date(row.created_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'}))+'</small>'+(row.read_at?' · Read':' <button type="button" class="tab" data-read-notification="'+escapeText(row.id)+'">Mark read</button>')+'</article>').join('');
+ $('#notificationRows').innerHTML=notificationRows.map(row=>'<article class="access-notification"><p>'+escapeText(row.message)+'</p><small>'+escapeText(new Date(row.created_at).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'}))+'</small>'+(row.kind==='registration_pending'&&isAdmin()&&accountAccess?.can_review===true?' <button type="button" class="tab" data-open-account-requests>Open approval request</button>':'')+(row.read_at?' · Read':' <button type="button" class="tab" data-read-notification="'+escapeText(row.id)+'">Mark read</button>')+'</article>').join('');
  $('#notificationMessage').textContent=notificationRows.length?'Page '+(Math.floor(notificationOffset/50)+1):'No notifications.';
  $('#notificationPrev').disabled=notificationOffset===0;$('#notificationNext').disabled=rows.length<=50;
 }
+async function openAccountApprovalSettings(){if(!isAdmin()||accountAccess?.can_review!==true)return;notificationSequence++;if($('#notificationsDialog').open)$('#notificationsDialog').close();$('#featureSettings').classList.remove('hide');await loadSettingsUsers();await loadPendingAccounts()}
 async function loadPendingAccounts(){
  const cafe=currentShop(),user=signedInUser,sequence=++reviewSequence;
  $('#accountRequestRows').innerHTML='';accountRequests=[];
@@ -485,6 +486,7 @@ $('#closeNotifications').addEventListener('click',()=>{notificationSequence++;$(
 $('#notificationPrev').addEventListener('click',()=>loadNotifications(notificationOffset-50));
 $('#notificationNext').addEventListener('click',()=>loadNotifications(notificationOffset+50));
 $('#notificationRows').addEventListener('click',async event=>{
+ const openButton=event.target.closest('[data-open-account-requests]');if(openButton){await openAccountApprovalSettings();return}
  const button=event.target.closest('[data-read-notification]');if(!button||!signedInUser)return;
  const user=signedInUser;button.disabled=true;
  try{const {data,error}=await supabaseClient.rpc('mark_notification_read',{p_id:button.dataset.readNotification});if(error)throw error;if(!data)throw Error('Notification is unavailable');if(signedInUser!==user)return;await loadNotifications(notificationOffset);await refreshNotificationBadge()}
