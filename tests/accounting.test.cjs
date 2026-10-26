@@ -70,7 +70,7 @@ test('saved vouchers preserve every side through open and unchanged save', () =>
     const opened = accounting.journalLineSides(saved, saved[0].side, true);
     assert.deepEqual(opened, saved, 'opening must retain the stored sides and values');
     assert.equal(accounting.validateVoucherLines(opened), '', 'example must be a valid balanced voucher');
-    const savedAgain = accounting.voucherLinesForSave(opened);
+    const savedAgain = accounting.voucherLinesForSave(opened, saved);
     assert.deepEqual(savedAgain, saved, 'an unchanged save must retain the same voucher meaning');
     assert.deepEqual(savedAgain.map(line => line.side), saved.map(line => line.side));
   }
@@ -233,6 +233,44 @@ test('summarizes debit and credit balances for each ledger account', () => {
     { account: 'Sales', debit: 0, credit: 100, balance: 100, side: 'Cr' },
     { account: 'UPI Account', debit: 60, credit: 0, balance: 60, side: 'Dr' },
   ]);
+});
+
+test('new expense and purchase adjustments increase costs and reduce Cash without changing legacy vouchers', () => {
+  for(const account of ['Other Expenses','Purchases']){
+    const lines=accounting.voucherLinesForSave([{side:'debit',particulars:account,amount:100},{side:'credit',particulars:'Cash',amount:100}]);
+    const vouchers=[{date:'2026-10-06',lines}];
+    assert.equal(accounting.validateVoucherLines(lines),'');
+    assert.deepEqual(accounting.voucherPostings(vouchers).map(p=>[p.account,p.balanceChange]),[[account,100],['Cash',-100]]);
+    const totals=accounting.totals([],vouchers);
+    assert.equal(totals.purchases+totals.expenses,100);
+    assert.deepEqual(accounting.voucherLinesForSave(accounting.voucherLinesForEdit(lines),lines),lines);
+    assert.equal(accounting.totals([],vouchers.map(v=>({...v,voidedAt:'2026-10-06'}))).expenses,0);
+  }
+});
+
+test('new revenue adjustment uses the existing Sales credit-normal convention',()=>{
+ const lines=accounting.voucherLinesForSave([{side:'debit',particulars:'Cash',amount:250},{side:'credit',particulars:'Sales',amount:250}]);
+ assert.deepEqual(accounting.voucherPostings([{lines}]).map(p=>[p.account,p.balanceChange]),[['Cash',250],['Sales',250]]);
+});
+
+test('reviewed expense/UPI correction fixes the opposite effect without rewriting amounts or sides',()=>{
+ const original=[{side:'debit',particulars:'Other Expenses',amount:24050},{side:'credit',particulars:'UPI Account',amount:24050}];
+ const before=JSON.stringify(original),draft=accounting.voucherLinesForEdit(original);
+ assert.equal(accounting.voucherNeedsPostingReview(original),true);
+ assert.deepEqual(accounting.voucherLinesForSave(draft,original),original,'unchanged opening/save must preserve history');
+ const corrected=accounting.voucherLinesForSave(draft,original,true);
+ assert.deepEqual(corrected.map(l=>[l.side,l.particulars,l.amount]),original.map(l=>[l.side,l.particulars,l.amount]));
+ assert.deepEqual(accounting.voucherPostings([{lines:corrected}]).map(p=>[p.account,p.balanceChange]),[['Other Expenses',24050],['UPI Account',-24050]]);
+ assert.equal(accounting.voucherNeedsPostingReview(corrected),false);assert.equal(JSON.stringify(original),before);
+ assert.deepEqual(accounting.voucherLinesForSave(corrected,corrected,true),corrected,'repeat save cannot add a second correction');
+});
+
+test('corrected refund reverses the expense and restores UPI; correction flag never reverses old fund transfers',()=>{
+ const refund=accounting.voucherLinesForSave([{side:'credit',particulars:'Other Expenses',amount:24050},{side:'debit',particulars:'UPI Account',amount:24050}]);
+ assert.deepEqual(accounting.voucherPostings([{lines:refund}]).map(p=>p.balanceChange),[-24050,24050]);
+ const oldTransfer=[{side:'debit',particulars:'UPI Account',amount:100},{side:'credit',particulars:'Cash',amount:100}];
+ assert.equal(accounting.voucherNeedsPostingReview(oldTransfer),false);
+ assert.deepEqual(accounting.voucherLinesForSave(accounting.voucherLinesForEdit(oldTransfer),oldTransfer,true),oldTransfer);
 });
 
 test('formats paise when present and whole rupees without trailing decimals', () => {

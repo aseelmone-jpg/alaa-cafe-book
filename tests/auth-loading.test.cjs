@@ -30,7 +30,7 @@ function harness(sessionPromise, cafePromise = Promise.resolve(true)) {
     document: { body },
     $: selector => element(selector.slice(1)),
     supabaseClient: { auth: { getSession: () => sessionPromise } },
-    authEventRevision: 0,
+    authEventRevision: 0, recoveryRequested:false,recoverySession:false, hideAccessPanels(){},showPasswordRecovery(){},
     signedInUser: null,
     loadCloud: async () => {
       context.loadingCafe = true;

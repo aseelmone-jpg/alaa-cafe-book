@@ -53,7 +53,7 @@ function createUi({ admin = true, shops } = {}) {
   const shopData = { shops: copy(shops || [{ id: 'cafe-1', owner_id: 'admin-1', entries: [], journalVouchers: [], journalAccountOptions: [] }]) };
   let context;
   context = vm.createContext({
-    CafeAccounting: accounting,
+    CafeAccounting: accounting, crypto:{randomUUID:()=> 'voucher-1'},journalRequest:null,
     $: getNode,
     money: accounting.formatMoney,
     escapeText: value => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character])),
@@ -62,15 +62,24 @@ function createUi({ admin = true, shops } = {}) {
     isAdmin: () => context.signedInUser?.app_metadata?.role === 'admin',
     signedInUser: { id: admin ? 'admin-1' : 'user-1', app_metadata: { role: admin ? 'admin' : 'user' } },
     activeCategoryView: 'Day Book',
-    userFeatureAccess: { reportsPnl: true, addCafe: false, manageAccounts: false },
+    userFeatureAccess: { dayBook:true,sales:true,purchases:true,expenses:true,upiAccount:true,journalEntry:true,cash:true,ledgers:true,reportsPnl: true, addCafe: false, manageAccounts: false },
     featureAccessCafeId: 'cafe-1',
     defaultJournalAccounts: vm.runInNewContext(accountDefaults[1]),
-    journalStorageReady: true,
+    journalStorageReady: true, realtimeGeneration: 0, realtimeReadSequence: 0, dayDraftDirty: false, dayDraftVersion: null, journalEditVersion: null,
     localStorage: { setItem() {} }, STORE_KEY: 'test-cafes',
     window: { alert: message => alerts.push(message), confirm: () => true },
     document: { querySelector: getNode, querySelectorAll: selector => selector === '.tabs .tab' ? tabs : [] },
     updateShopUI() {}, syncEntryForm() {}, loadUserFeatureAccess() {}, startRealtimeSync() {},
     supabaseClient: {
+      async rpc(name, args) {
+        const shop=shopData.shops.find(item=>item.id===context.activeShopId);
+        if(name==='cafe_accounting_snapshot')return {error:null,data:{day_entries:shop.entries.map(e=>({id:e.id,updated_at:e.updatedAt,entry_date:e.date,sale:e.sale,upi:e.upi,purchase:e.purchase,other_expense:e.otherExpense,remarks:e.remarks})),journal_vouchers:(shop.journalVouchers||[]).map(v=>({id:v.id,updated_at:v.updatedAt,voucher_no:v.voucherNo,voucher_date:v.date,remark:v.remark,lines:copy(v.lines),voided_at:v.voidedAt,voided_by:v.voidedBy})),journal_account_options:shop.journalAccountOptions||[]}};
+        assert.equal(name,'save_journal_voucher_checked');
+        const savedPrior=shop.journalVouchers.find(v=>v.id===args.p_id);const payload={cafe_id:args.p_cafe_id,voucher_no:savedPrior?savedPrior.voucherNo:Math.max(0,...shop.journalVouchers.map(v=>v.voucherNo))+1,voucher_date:args.p_voucher_date,remark:args.p_remark,lines:copy(args.p_lines)};
+        requests.push({table:'journal_vouchers',action:savedPrior?'update':'insert',payload,args});
+        if(context.rpcSaveError)return {error:{message:context.rpcSaveError},data:null};
+        return {error:null,data:{...payload,id:args.p_id||'voucher-1',updated_at:'2026-10-06T00:00:00Z'}};
+      },
       from(table) {
         const request = { table };
         requests.push(request);
@@ -107,6 +116,7 @@ function createUi({ admin = true, shops } = {}) {
     },
   });
   vm.runInContext(listener('function canUseManagementFeature('), context);
+  for(const prefix of ['function canUseFeature(', 'function dayRow(', 'function voucherRow('])vm.runInContext(listener(prefix),context);
   vm.runInContext(uiFunctions, context, { filename: 'actual journal UI functions' });
   for (const prefix of [
     "document.querySelector('.tabs').addEventListener('click'",
@@ -294,7 +304,8 @@ test('cancel, edit, reverse, and void replace or remove the old dashboard effect
   assert.ok(ui.requests.at(-1).payload.voided_at);
   assert.equal(ui.shopData.shops[0].journalVouchers.length, 1);
   assert.ok(ui.shopData.shops[0].journalVouchers[0].voidedAt);
-  assert.match(ui.getNode('#journalVoucherList').innerHTML, /VOID/);
+  assert.equal(ui.getNode('#journalVoucherList').innerHTML, '<div class="journal-balance">No active vouchers for this cafe yet.</div>');
+  assert.equal(ui.shopData.shops[0].journalVouchers.length, 1, 'voided voucher remains in the stored history');
   assert.equal(ui.getNode('#cashTotal').textContent, '₹0');
   assert.equal(ui.getNode('#upiTotal').textContent, '₹0');
 });
@@ -319,6 +330,60 @@ test('rerender and realtime preserve unsaved voucher date and remark edits', asy
 });
 
 
+test('realtime preserves dirty Day Book fields and the original edit version',async()=>{
+ const ui=createUi();ui.context.dayDraftDirty=true;ui.context.dayDraftVersion='original-version';
+ ui.getNode('#sale').value='777';ui.getNode('#remarks').value='Unfinished';
+ let syncCalls=0;ui.context.syncEntryForm=()=>{syncCalls++;ui.getNode('#sale').value='0'};
+ await ui.run("refreshCafeFromRealtime('cafe-1')");
+ assert.equal(syncCalls,0);assert.equal(ui.getNode('#sale').value,'777');assert.equal(ui.getNode('#remarks').value,'Unfinished');assert.equal(ui.context.dayDraftVersion,'original-version');
+});
+
+test('editing sends the version captured on open and a conflict preserves the draft',async()=>{
+ const ui=createUi({shops:[{id:'cafe-1',owner_id:'admin-1',entries:[],journalAccountOptions:[],journalVouchers:[{id:'voucher-1',voucherNo:1,date:'2026-10-01',updatedAt:'original',lines:[{side:'debit',particulars:'Cash',amount:100,transferRole:'destination'},{side:'credit',particulars:'UPI Account',amount:100,transferRole:'source'}]}]}]});
+ ui.run('loadJournalVoucher(currentShop().journalVouchers[0])');
+ ui.shopData.shops[0].journalVouchers[0].updatedAt='newer';
+ ui.context.rpcSaveError='This voucher changed elsewhere';
+ ui.getNode('#journalRemark').value='keep this draft';
+ await ui.getNode('#journalSave').handlers.click();
+ assert.equal(ui.requests[0].args.p_expected_updated_at,'original');
+ assert.equal(ui.getNode('#journalRemark').value,'keep this draft');
+ assert.equal(ui.run('editingVoucherId'),'voucher-1');assert.match(ui.alerts[0],/changed elsewhere/);
+});
+
+test('the cache persists only the selected cafe ID, never financial records',()=>{
+ const ui=createUi();let stored;ui.context.localStorage.setItem=(key,value)=>{stored=JSON.parse(value)};
+ ui.run('render()');assert.deepEqual(stored,{activeId:'cafe-1'});
+ assert.doesNotMatch(html,/localStorage\.getItem\(LEGACY_KEY/);
+ assert.match(html,/alaa-cafes-v2:/);
+});
+
+test('a user without a feature-settings row receives the existing defaults after access loads',async()=>{
+ const defaults=vm.runInNewContext('('+html.match(/const featureDefaults=([^;]+);/)[1]+')');
+ const context={currentShop:()=>({id:'cafe-1'}),signedInUser:{id:'user-1'},featureDefaults:defaults,isAdmin:()=>false,setRoleAccess(){},supabaseClient:{from:()=>({select(){return this},eq(){return this},async maybeSingle(){return {data:null,error:null}}})}};
+ vm.runInNewContext(listener('async function loadUserFeatureAccess('),context);
+ await context.loadUserFeatureAccess();assert.equal(context.userFeatureAccess.dayBook,true);assert.equal(context.userFeatureAccess.journalEntry,true);assert.equal(context.userFeatureAccess.addCafe,false);assert.equal(context.featureAccessCafeId,'cafe-1');
+});
+
+test('an old realtime response is discarded after account changes',async()=>{
+ const ui=createUi();let resolve;ui.context.supabaseClient.rpc=()=>new Promise(done=>{resolve=done});
+ const refresh=ui.run("refreshCafeFromRealtime('cafe-1')");
+ ui.context.signedInUser={id:'different-user',app_metadata:{role:'user'}};
+ resolve({error:null,data:{day_entries:[{entry_date:'2026-10-06',sale:999}],journal_vouchers:[],journal_account_options:[]}});await refresh;
+ assert.deepEqual(ui.shopData.shops[0].entries,[]);
+});
+
+test('a disabled Journal Entry feature rejects writes before an API call',async()=>{
+ const ui=createUi({admin:false});ui.context.userFeatureAccess.journalEntry=false;
+ await ui.getNode('#journalSave').handlers.click();assert.equal(ui.requests.length,0);assert.match(ui.alerts[0],/not enabled/);
+});
+
+test('rerender cannot reopen a report after that feature is disabled',()=>{
+ const ui=createUi({admin:false});ui.selectTab('Reports & P&L');
+ ui.context.userFeatureAccess.reportsPnl=false;ui.run('render()');
+ assert.equal(ui.getNode('#pnlReport').classList.contains('hide'),true);
+ assert.match(ui.getNode('#otherText').textContent,/not enabled/);
+});
+
 test('delegated management actions require an explicit true flag for the current cafe', () => {
   const ui = createUi({ admin: false });
   assert.equal(ui.run("canUseManagementFeature('addCafe')"), false);
@@ -340,4 +405,74 @@ test('admin management access stays enabled', () => {
   const ui = createUi();
   assert.equal(ui.run("canUseManagementFeature('addCafe')"), true);
   assert.equal(ui.run("canUseManagementFeature('manageAccounts')"), true);
+});
+
+test('advanced new vouchers keep Debit + Debit + Credit sides across rerenders and save',async()=>{
+ const ui=createUi();ui.selectTab('Journal Entry');
+ ui.getNode('#journalManualSides').checked=true;
+ ui.run("journalDraftLines=[{side:'debit',particulars:'Purchases',amount:'60'},{side:'debit',particulars:'Other Expenses',amount:'40'},{side:'credit',particulars:'Cash',amount:'100'}];renderJournalApp();renderJournalApp()");
+ assert.deepEqual(Array.from(ui.run('journalDraftLines'),l=>l.side),['debit','debit','credit']);
+ await ui.getNode('#journalSave').handlers.click();
+ assert.deepEqual(Array.from(ui.requests[0].payload.lines,l=>l.side),['debit','debit','credit']);
+ assert.equal(ui.getNode('#cashTotal').textContent,'₹-100');
+});
+
+test('a duplicate voucher warning can cancel saving without changing balances',async()=>{
+ const lines=[{side:'debit',particulars:'Cash',amount:100,transferRole:'destination'},{side:'credit',particulars:'UPI Account',amount:100,transferRole:'source'}];
+ const ui=createUi({shops:[{id:'cafe-1',owner_id:'admin-1',entries:[],journalAccountOptions:[],journalVouchers:[{id:'old',voucherNo:1,date:'2026-10-01',lines}]}]});
+ ui.selectTab('Journal Entry');ui.run('journalDraftLines='+JSON.stringify(lines));
+ let warning;ui.context.window.confirm=message=>{warning=message;return false};
+ await ui.getNode('#journalSave').handlers.click();
+ assert.match(warning,/same date, accounts and amounts/);assert.equal(ui.requests.length,0);
+ assert.equal(ui.shopData.shops[0].journalVouchers.length,1);
+});
+
+test('changing historical adjustment lines requires confirmation of corrected posting convention',async()=>{
+ const voucher={id:'voucher-1',voucherNo:1,date:'2026-10-01',updatedAt:'original',lines:[{side:'debit',particulars:'Other Expenses',amount:100},{side:'credit',particulars:'Cash',amount:100}]};
+ const ui=createUi({shops:[{id:'cafe-1',owner_id:'admin-1',entries:[],journalAccountOptions:[],journalVouchers:[voucher]}]});
+ ui.run('loadJournalVoucher(currentShop().journalVouchers[0]);journalDraftLines.forEach(l=>l.amount="150")');
+ let message;ui.context.window.confirm=text=>{message=text;return false};
+ await ui.getNode('#journalSave').handlers.click();assert.match(message,/old posting convention/);assert.equal(ui.requests.length,0);
+ assert.deepEqual(ui.shopData.shops[0].journalVouchers[0].lines,voucher.lines);
+});
+
+test('retrying an unsuccessful journal create retains the same request ID',async()=>{
+ const ui=createUi();ui.selectTab('Journal Entry');
+ ui.run("journalDraftLines=[{side:'debit',particulars:'Cash',amount:'100'},{side:'credit',particulars:'UPI Account',amount:'100'}]");
+ let requestCounter=0;ui.context.crypto.randomUUID=()=> 'request-'+(++requestCounter);
+ ui.context.rpcSaveError='Network response lost';await ui.getNode('#journalSave').handlers.click();
+ ui.context.rpcSaveError=null;await ui.getNode('#journalSave').handlers.click();
+ assert.equal(ui.requests[0].args.p_id,'request-1');assert.equal(ui.requests[1].args.p_id,'request-1');
+ assert.equal(ui.shopData.shops[0].journalVouchers.length,1);assert.equal(ui.run('journalRequest'),null);
+});
+
+test('TOTAL includes Cash movements on journal-only dates before the next Day Book date',()=>{
+ const ui=createUi({shops:[{id:'cafe-1',owner_id:'admin-1',journalAccountOptions:[],entries:[{date:'2026-01-01',sale:100,upi:0,purchase:0,otherExpense:0},{date:'2026-01-03',sale:200,upi:0,purchase:0,otherExpense:0}],journalVouchers:[{id:'transfer',date:'2026-01-02',lines:[{side:'debit',particulars:'Cash',amount:50,transferRole:'destination'},{side:'credit',particulars:'UPI Account',amount:50,transferRole:'source'}]}]}]});
+ ui.run('render()');assert.match(ui.getNode('#rows').innerHTML,/₹150<\/td><td class="num">₹350<\/td>/);
+});
+
+test('reviewing a saved expense/UPI voucher corrects dashboard, statement and P&L in one versioned update',async()=>{
+ const voucher={id:'voucher-5',voucherNo:5,date:'2026-10-21',updatedAt:'original',lines:[{side:'debit',particulars:'Other Expenses',amount:24050},{side:'credit',particulars:'UPI Account',amount:24050}]};
+ const ui=createUi({shops:[{id:'cafe-1',owner_id:'admin-1',journalAccountOptions:[],entries:[{date:'2026-10-01',sale:100000,upi:100000,purchase:0,otherExpense:0}],journalVouchers:[voucher]}]});
+ ui.run('loadJournalVoucher(currentShop().journalVouchers[0]);render()');
+ assert.equal(ui.getNode('#journalCorrectPosting').checked,false);assert.equal(ui.getNode('#journalCorrectionNotice').classList.contains('hide'),false);
+ assert.equal(ui.getNode('#upiTotal').textContent,'₹1,24,050');
+ ui.getNode('#journalCorrectPosting').checked=true;let warning;ui.context.window.confirm=text=>{warning=text;return true};
+ await ui.getNode('#journalSave').handlers.click();
+ assert.match(warning,/old posting convention/);assert.equal(ui.requests.length,1);assert.equal(ui.requests[0].action,'update');
+ assert.equal(ui.requests[0].args.p_id,'voucher-5');assert.equal(ui.requests[0].args.p_expected_updated_at,'original');
+ assert.equal(ui.shopData.shops[0].journalVouchers.length,1);assert.equal(ui.getNode('#upiTotal').textContent,'₹75,950');
+ assert.equal(ui.getNode('#expenseTotal').textContent,'₹24,050');assert.equal(ui.getNode('#cashTotal').textContent,'₹0');
+ const saved=ui.shopData.shops[0].journalVouchers[0];
+ assert.deepEqual(saved.lines.map(l=>[l.side,l.particulars,l.amount]),voucher.lines.map(l=>[l.side,l.particulars,l.amount]));
+ assert.equal(accounting.upiStatement(ui.shopData.shops[0].entries,[saved]).at(-1).closing,75950);
+ assert.equal(accounting.totals(ui.shopData.shops[0].entries,[saved]).expenses,24050);
+ assert.equal(ui.getNode('#journalCorrectPosting').checked,false);
+});
+
+test('cancelling the legacy calculation correction makes no request and keeps the original voucher',async()=>{
+ const voucher={id:'old',voucherNo:5,date:'2026-10-21',lines:[{side:'debit',particulars:'Other Expenses',amount:24050},{side:'credit',particulars:'UPI Account',amount:24050}]};
+ const ui=createUi({shops:[{id:'cafe-1',owner_id:'admin-1',entries:[],journalAccountOptions:[],journalVouchers:[voucher]}]});
+ ui.run('loadJournalVoucher(currentShop().journalVouchers[0])');ui.getNode('#journalCorrectPosting').checked=true;ui.context.window.confirm=()=>false;
+ await ui.getNode('#journalSave').handlers.click();assert.equal(ui.requests.length,0);assert.deepEqual(ui.shopData.shops[0].journalVouchers[0],voucher);
 });
