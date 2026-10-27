@@ -57,8 +57,39 @@ test('approved status permits the next financial load without changing the authe
  const h=harness({status:'approved'});assert.equal(await h.context.ensureAccountAccess(),true);
  assert.equal(h.context.accountAccessCompatibility,false);assert.ok(h.watchers.some(w=>w.filter.table==='user_account_access'));
  const load=html.slice(html.indexOf('async function loadCloud(){'),html.indexOf('async function authAction('));
- assert.ok(load.indexOf('ensureAccountAccess()')<load.indexOf("from('cafes')"));
+ assert.ok(load.indexOf('ensureAccountAccess()')<load.indexOf('loadAccessibleCafes(loadingUser)'));
  assert.doesNotMatch(load,/\.insert\(/,'Loading an account must not create cafes or import cached financial data');
+});
+test('admins see their own cafes; users see only cafes assigned through membership',async()=>{
+ const tables={
+  cafes:[
+   {id:'admin-cafe-a',owner_id:'admin-1',archived_at:null},
+   {id:'admin-cafe-b',owner_id:'admin-1',archived_at:null},
+   {id:'user-owned-duplicate',owner_id:'user-1',archived_at:null},
+   {id:'other-cafe',owner_id:'other-admin',archived_at:null},
+  ],
+  cafe_members:[
+   {cafe_id:'admin-cafe-a',user_id:'user-1'},
+   {cafe_id:'admin-cafe-b',user_id:'user-1'},
+   {cafe_id:'other-cafe',user_id:'someone-else'},
+  ],
+ };
+ const calls=[];
+ const supabaseClient={from(table){const filters={};const query={};
+  query.select=()=>query;query.order=()=>query;
+  query.eq=(column,value)=>{filters[column]=value;return query};
+  query.is=(column,value)=>{filters[column]={is:value};return query};
+  query.in=(column,values)=>{filters[column]={in:values};return query};
+  query.then=(resolve,reject)=>{calls.push({table,filters:{...filters}});const data=(tables[table]||[]).filter(row=>Object.entries(filters).every(([column,expected])=>expected&&typeof expected==='object'&&'in'in expected?expected.in.includes(row[column]):expected&&typeof expected==='object'&&'is'in expected?row[column]===expected.is:row[column]===expected));return Promise.resolve({data,error:null}).then(resolve,reject)};
+  return query;
+ }};
+ const helper=html.slice(html.indexOf('async function loadAccessibleCafes(user){'),html.indexOf('async function initializeAuth(){'));
+ const context={supabaseClient};vm.runInNewContext(helper,context);
+ const userCafes=await context.loadAccessibleCafes({id:'user-1',app_metadata:{role:'user'}});
+ assert.equal(userCafes.data.map(cafe=>cafe.id).join(','),'admin-cafe-a,admin-cafe-b');
+ const adminCafes=await context.loadAccessibleCafes({id:'admin-1',app_metadata:{role:'admin'}});
+ assert.equal(adminCafes.data.map(cafe=>cafe.id).join(','),'admin-cafe-a,admin-cafe-b');
+ assert.deepEqual(calls.map(call=>call.table),['cafe_members','cafes','cafes']);
 });
 test('missing approval backend denies ordinary users; owner compatibility is explicitly read-only',async()=>{
  const error={code:'PGRST202',message:'Could not find my_account_access'};
