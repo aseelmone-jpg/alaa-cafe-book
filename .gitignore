@@ -20,3 +20,9 @@ ui-debug.log*
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Local audits, preview builds, and imported attachments; never publish these
+/work/
+/outputs/
+/.codex-remote-attachments/
+/attachments/
