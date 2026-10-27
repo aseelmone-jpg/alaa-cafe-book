@@ -8,7 +8,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'sha256-siGStBOrLKVNMXu+2cQf80UPV2B5ThKD+358R4/yXUI='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://zhshcpkgvijbznetfseu.supabase.co wss://zhshcpkgvijbznetfseu.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+          "value": "default-src 'self'; script-src 'self' 'sha256-yVyfMXi4ILfFR8KVPwVQGXpAzyslCuiG+uba/4hRgkE='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://zhshcpkgvijbznetfseu.supabase.co wss://zhshcpkgvijbznetfseu.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
         },
         {
           "key": "X-Frame-Options",
@@ -25,6 +25,33 @@
         {
           "key": "Permissions-Policy",
           "value": "camera=(), microphone=(), geolocation=()"
+        }
+      ]
+    },
+    {
+      "source": "/vendor/supabase-2.118.0.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/accounting.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300, stale-while-revalidate=86400"
+        }
+      ]
+    },
+    {
+      "source": "/pwa-install.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=300, stale-while-revalidate=86400"
         }
       ]
     }
