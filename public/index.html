@@ -94,7 +94,7 @@ function purgeLegacyFinancialCaches(){try{for(const key of ['alaa-cafes-v1','ala
 function selectAccountCache(userId){purgeLegacyFinancialCaches();const key=userId?'alaa-cafes-v2:'+userId:null;if(STORE_KEY===key)return;clearAccountState();STORE_KEY=key;/* Financial rows are loaded fresh; only the selected cafe ID is cached. */if(key){try{shopData.activeId=JSON.parse(localStorage.getItem(key)||'{}').activeId||'empty'}catch{}}}
 function dayRow(x){return {id:x.id,updatedAt:x.updated_at,date:x.entry_date,sale:x.sale,upi:x.upi,purchase:x.purchase,otherExpense:x.other_expense,remarks:x.remarks||'',saleBank:x.sale_bank??null,purchaseUpi:x.purchase_upi??null,purchaseBank:x.purchase_bank??null,otherExpenseUpi:x.other_expense_upi??null,otherExpenseBank:x.other_expense_bank??null}}
 function voucherRow(v){return {id:v.id,updatedAt:v.updated_at,voucherNo:v.voucher_no,date:v.voucher_date,remark:v.remark||'',lines:v.lines||[],voidedAt:v.voided_at||null,voidedBy:v.voided_by||null}}
-function canUseFeature(key){return isAdmin()||(featureAccessCafeId===currentShop().id&&userFeatureAccess[key]===true)}
+function canUseFeature(key){return isAdmin()||(!!signedInUser&&currentShop().owner_id===signedInUser.id&&['dayBook','sales','purchases','expenses','upiAccount','reportsPnl','journalEntry','cash','ledgers'].includes(key))||(featureAccessCafeId===currentShop().id&&userFeatureAccess[key]===true)}
 let shopData=null;
 shopData={activeId:'empty',shops:[{id:'empty',name:'ALAA CAFE',location:'CHAPPANANGADI',entries:[],journalVouchers:[],journalAccountOptions:[]}]};
 shopData.shops.forEach(s=>{if(!Array.isArray(s.entries))s.entries=[];if(!s.location)s.location='CHAPPANANGADI'});
