@@ -16,9 +16,19 @@ const headers = [
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
 ];
+const cacheRules = [
+  { path: '/vendor/supabase-2.118.0.js', value: 'public, max-age=31536000, immutable' },
+  { path: '/accounting.js', value: 'public, max-age=300, stale-while-revalidate=86400' },
+  { path: '/pwa-install.js', value: 'public, max-age=300, stale-while-revalidate=86400' },
+];
 fs.writeFileSync(path.join(root, 'vercel.json'), JSON.stringify({
   $schema: 'https://openapi.vercel.sh/vercel.json', framework: null, outputDirectory: 'public',
-  headers: [{ source: '/(.*)', headers }],
+  headers: [
+    { source: '/(.*)', headers },
+    ...cacheRules.map(rule => ({ source: rule.path, headers: [{ key: 'Cache-Control', value: rule.value }] })),
+  ],
 }, null, 2) + '\n');
-fs.writeFileSync(path.join(root, 'public/_headers'), '/*\n' + headers.map(header => '  ' + header.key + ': ' + header.value).join('\n') + '\n');
-console.log('Generated Vercel and Netlify security headers for the current inline scripts.');
+const netlifyHeaders = '/*\n' + headers.map(header => '  ' + header.key + ': ' + header.value).join('\n') +
+  '\n' + cacheRules.map(rule => '\n' + rule.path + '\n  Cache-Control: ' + rule.value).join('') + '\n';
+fs.writeFileSync(path.join(root, 'public/_headers'), netlifyHeaders);
+console.log('Generated CSP and cache headers for the current scripts and static assets.');
