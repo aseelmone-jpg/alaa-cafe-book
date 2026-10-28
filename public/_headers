@@ -1,5 +1,5 @@
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-xRQcFM4E/moVJ/ENyd2EBRJS0S6uKeFgh9lfffXRgvQ='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://zhshcpkgvijbznetfseu.supabase.co wss://zhshcpkgvijbznetfseu.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-wT1psYCHJzEusan+TdVjQQb+ht9874m1kwOFPvF2n/U='; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://zhshcpkgvijbznetfseu.supabase.co wss://zhshcpkgvijbznetfseu.supabase.co; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
@@ -7,9 +7,7 @@
 
 /vendor/supabase-2.118.0.js
   Cache-Control: public, max-age=31536000, immutable
-
 /accounting.js
-  Cache-Control: public, max-age=300, stale-while-revalidate=86400
-
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
 /pwa-install.js
-  Cache-Control: public, max-age=300, stale-while-revalidate=86400
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
