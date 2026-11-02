@@ -7,68 +7,29 @@
     const number = Number(value || 0);
     return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
   };
-  const ledgerAccountName = value => { const name = String(value || '').trim(); return name === 'UPI' ? 'UPI Account' : name; };
-  function ledgerStatement(entries, vouchers = [], accountName, from = '', to = '') {
-    const selected = ledgerAccountName(accountName), transactions = []; let order = 0;
-    for (const line of journalLines(entries || [])) for (const side of ['debit', 'credit']) {
-      const account = ledgerAccountName(line[side]), value = amount(line.amount);
-      if (!account || value <= 0) continue;
-      transactions.push({ account, date: line.date || '', type: 'Day Book', reference: 'Day Book', details: line.particulars || '', debit: side === 'debit' ? value : 0, credit: side === 'credit' ? value : 0, order: order++ });
-    }
-    for (const posting of voucherPostings(vouchers)) transactions.push({
-      account: ledgerAccountName(posting.account), date: posting.date || '', type: 'Journal Voucher',
-      reference: posting.voucherNo ? 'JV ' + posting.voucherNo : 'Journal Voucher', details: posting.remark || '',
-      debit: amount(posting.debit), credit: amount(posting.credit), order: order++,
-    });
-    const matching = transactions.filter(row => row.account === selected).sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order);
-    const within = date => (!from || date >= from) && (!to || date <= to);
-    const opening = amount(matching.filter(row => from && row.date < from).reduce((sum, row) => sum + row.debit - row.credit, 0));
-    let balance = opening, debit = 0, credit = 0;
-    const rows = matching.filter(row => within(row.date)).map(row => {
-      debit = amount(debit + row.debit); credit = amount(credit + row.credit); balance = amount(balance + row.debit - row.credit);
-      return { ...row, balance };
-    });
-    return { account: selected, opening, debit, credit, closing: balance, rows };
-  }
-
+  const ledgerAccountName = value => {
+    const name = String(value || '').trim();
+    return name === 'UPI' ? 'UPI Account' : name;
+  };
   const transferAccounts = new Set(['Cash', 'UPI Account', 'Bank']);
   const isTransfer = lines => Array.isArray(lines) && lines.length >= 2 &&
     lines.every(line => transferAccounts.has(String(line.particulars || '').trim())) &&
     new Set(lines.map(line => String(line.particulars || '').trim())).size >= 2;
   const isLegacyTransfer = lines => isTransfer(lines) && lines.every(line => !line.transferRole);
 
-  const paymentSplitFields = ['saleBank', 'purchaseUpi', 'purchaseBank', 'otherExpenseUpi', 'otherExpenseBank'];
-  function entryPayments(entry) {
-    const legacy = paymentSplitFields.every(key => entry[key] === undefined || entry[key] === null);
-    const saleBank = amount(entry.saleBank), purchaseUpi = amount(entry.purchaseUpi), purchaseBank = amount(entry.purchaseBank);
-    const expenseUpi = amount(entry.otherExpenseUpi), expenseBank = amount(entry.otherExpenseBank);
-    return {
-      legacy,
-      sales: { Cash: amount(amount(entry.sale) - amount(entry.upi) - saleBank), 'UPI Account': amount(entry.upi), Bank: saleBank },
-      purchases: { Cash: amount(amount(entry.purchase) - purchaseUpi - purchaseBank), 'UPI Account': purchaseUpi, Bank: purchaseBank },
-      expenses: { Cash: amount(amount(entry.otherExpense) - expenseUpi - expenseBank), 'UPI Account': expenseUpi, Bank: expenseBank },
-    };
-  }
-
   function validateEntry(entry) {
-    const hasSplit = paymentSplitFields.some(key => entry[key] !== undefined && entry[key] !== null);
-    if (hasSplit && paymentSplitFields.some(key => entry[key] === undefined || entry[key] === null)) return 'Provide all payment split amounts, using zero for unused accounts.';
-    const splitValues = hasSplit ? [['Sales paid to Bank', entry.saleBank], ['Purchases paid by UPI', entry.purchaseUpi], ['Purchases paid by Bank', entry.purchaseBank], ['Expenses paid by UPI', entry.otherExpenseUpi], ['Expenses paid by Bank', entry.otherExpenseBank]] : [];
-    for (const [label, value] of [['Sale', entry.sale], ['Google Pay (UPI)', entry.upi], ['Purchase', entry.purchase], ['Other expenses', entry.otherExpense], ...splitValues]) {
+    for (const [label, value] of [['Sale', entry.sale], ['Google Pay (UPI)', entry.upi], ['Purchase', entry.purchase], ['Other expenses', entry.otherExpense]]) {
       const number = value === undefined || value === null || value === '' ? 0 : Number(value);
       if (!Number.isFinite(number) || number < 0) return label + ' must be a valid non-negative amount.';
       if (Math.abs(Math.round(number * 100) - number * 100) > 1e-7) return label + ' can have at most two decimal places.';
       if (number > 9999999999.99) return label + ' exceeds the maximum supported amount.';
     }
     if (amount(entry.upi) > amount(entry.sale)) return 'Google Pay (UPI) cannot be greater than total sales.';
-    if (hasSplit && amount(amount(entry.upi) + amount(entry.saleBank)) > amount(entry.sale)) return 'Sales UPI plus Bank cannot exceed total sales.';
-    if (hasSplit && amount(amount(entry.purchaseUpi) + amount(entry.purchaseBank)) > amount(entry.purchase)) return 'Purchase UPI plus Bank cannot exceed total purchases.';
-    if (hasSplit && amount(amount(entry.otherExpenseUpi) + amount(entry.otherExpenseBank)) > amount(entry.otherExpense)) return 'Expense UPI plus Bank cannot exceed total expenses.';
     return '';
   }
 
   function voucherPostings(vouchers = []) {
-    return (Array.isArray(vouchers) ? vouchers : []).filter(voucher => !voucher.voidedAt && !voucher.voided_at).flatMap(voucher => {
+    return (Array.isArray(vouchers) ? vouchers : []).flatMap(voucher => {
       const legacyTransfer = isLegacyTransfer(voucher.lines);
       return (Array.isArray(voucher.lines) ? voucher.lines : []).flatMap(line => {
         const account = String(line.particulars || '').trim();
@@ -79,10 +40,7 @@
         const effectiveSide = legacyTransfer ? (line.side === 'debit' ? 'credit' : 'debit') : line.side;
         const debit = effectiveSide === 'debit' ? value : 0;
         const credit = effectiveSide === 'credit' ? value : 0;
-        const normalDebit = ['Cash', 'UPI Account', 'Bank', 'Purchases', 'Other Expenses', 'Expenses'].includes(account) || account.startsWith('Staff Advance - ');
-        // Unknown historical accounts retain their existing convention; no account types are invented.
-        const normalChange = normalDebit ? debit - credit : credit - debit;
-        const balanceChange = line.transferRole === 'source' ? -value : line.transferRole === 'destination' ? value : legacyTransfer ? debit - credit : line.postingRule === 'account-normal-v1' ? normalChange : credit - debit;
+        const balanceChange = line.transferRole === 'source' ? -value : line.transferRole === 'destination' ? value : legacyTransfer ? debit - credit : credit - debit;
         return [{ date: voucher.date || voucher.voucher_date || '', account, debit, credit, balanceChange: amount(balanceChange), remark: voucher.remark || '', voucherNo: voucher.voucherNo ?? voucher.voucher_no ?? '' }];
       });
     });
@@ -90,10 +48,7 @@
 
   function dailyBalances(entries, vouchers = []) {
     const byDate = new Map();
-    for (const entry of entries || []) {
-      const payments = entryPayments(entry);
-      byDate.set(entry.date, { entry, cashSales: payments.sales.Cash, purchase: payments.purchases.Cash, expense: payments.expenses.Cash, journalDebit: 0, journalCredit: 0, journalBalanceChange: 0 });
-    }
+    for (const entry of entries || []) byDate.set(entry.date, { entry, cashSales: amount(amount(entry.sale) - amount(entry.upi)), purchase: amount(entry.purchase), expense: amount(entry.otherExpense), journalDebit: 0, journalCredit: 0, journalBalanceChange: 0 });
     for (const posting of voucherPostings(vouchers)) {
       if (posting.account !== 'Cash' || !posting.date) continue;
       const row = byDate.get(posting.date) || { entry: { date: posting.date, remarks: posting.remark }, cashSales: 0, purchase: 0, expense: 0, journalDebit: 0, journalCredit: 0, journalBalanceChange: 0 };
@@ -113,8 +68,7 @@
   function totals(entries, vouchers = []) {
     const result = (entries || []).reduce((sum, entry) => {
       sum.sales = amount(sum.sales + amount(entry.sale));
-      const payments = entryPayments(entry);
-      sum.upi = amount(sum.upi + payments.sales['UPI Account'] - payments.purchases['UPI Account'] - payments.expenses['UPI Account']);
+      sum.upi = amount(sum.upi + amount(entry.upi));
       sum.purchases = amount(sum.purchases + amount(entry.purchase));
       sum.expenses = amount(sum.expenses + amount(entry.otherExpense));
       return sum;
@@ -131,14 +85,12 @@
   function journalLines(entries) {
     const lines = [];
     for (const entry of [...(entries || [])].sort((a, b) => a.date.localeCompare(b.date))) {
-      const payments = entryPayments(entry);
-      for (const account of ['Cash', 'UPI Account', 'Bank']) {
-        const label = account === 'UPI Account' ? 'UPI' : account;
-        if (payments.sales[account] > 0) lines.push({ date: entry.date, particulars: label + ' received from sales', debit: account, credit: 'Sales', amount: payments.sales[account] });
-      }
-      for (const [group, debit, fallback] of [['purchases', 'Purchases', 'Purchase'], ['expenses', 'Other Expenses', 'Other expense']]) {
-        for (const account of ['Cash', 'UPI Account', 'Bank']) if (payments[group][account] > 0) lines.push({ date: entry.date, particulars: entry.remarks || fallback, debit, credit: account, amount: payments[group][account] });
-      }
+      const sale = amount(entry.sale), upi = amount(entry.upi), cashSale = amount(sale - upi);
+      const purchase = amount(entry.purchase), expense = amount(entry.otherExpense);
+      if (cashSale > 0) lines.push({ date: entry.date, particulars: 'Cash received from sales', debit: 'Cash', credit: 'Sales', amount: cashSale });
+      if (upi > 0) lines.push({ date: entry.date, particulars: 'UPI received from sales', debit: 'UPI Account', credit: 'Sales', amount: upi });
+      if (purchase > 0) lines.push({ date: entry.date, particulars: entry.remarks || 'Purchase', debit: 'Purchases', credit: 'Cash', amount: purchase });
+      if (expense > 0) lines.push({ date: entry.date, particulars: entry.remarks || 'Other expense', debit: 'Other Expenses', credit: 'Cash', amount: expense });
     }
     return lines;
   }
@@ -146,17 +98,14 @@
   function upiStatement(entries, vouchers = []) {
     const byDate = new Map();
     for (const entry of entries || []) {
-      const payments = entryPayments(entry);
-      const row = byDate.get(entry.date) || { entry: { date: entry.date, remarks: entry.remarks || '' }, received: 0, purchasePaid: 0, expensePaid: 0, journalDebit: 0, journalCredit: 0, journalBalanceChange: 0 };
+      const row = byDate.get(entry.date) || { entry: { date: entry.date, remarks: entry.remarks || '' }, received: 0, journalDebit: 0, journalCredit: 0, journalBalanceChange: 0 };
       row.received = amount(row.received + amount(entry.upi));
-      row.purchasePaid = amount(row.purchasePaid + payments.purchases['UPI Account']);
-      row.expensePaid = amount(row.expensePaid + payments.expenses['UPI Account']);
       if (!row.entry.remarks && entry.remarks) row.entry.remarks = entry.remarks;
       byDate.set(entry.date, row);
     }
     for (const posting of voucherPostings(vouchers)) {
       if (posting.account !== 'UPI Account' || !posting.date) continue;
-      const row = byDate.get(posting.date) || { entry: { date: posting.date, remarks: posting.remark }, received: 0, purchasePaid: 0, expensePaid: 0, journalDebit: 0, journalCredit: 0, journalBalanceChange: 0 };
+      const row = byDate.get(posting.date) || { entry: { date: posting.date, remarks: posting.remark }, received: 0, journalDebit: 0, journalCredit: 0, journalBalanceChange: 0 };
       row.journalDebit = amount(row.journalDebit + posting.debit);
       row.journalCredit = amount(row.journalCredit + posting.credit);
       row.journalBalanceChange = amount(row.journalBalanceChange + posting.balanceChange);
@@ -164,9 +113,9 @@
     }
     let balance = 0;
     return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).flatMap(([, row]) => {
-      if (row.received <= 0 && row.purchasePaid <= 0 && row.expensePaid <= 0 && row.journalDebit <= 0 && row.journalCredit <= 0) return [];
+      if (row.received <= 0 && row.journalDebit <= 0 && row.journalCredit <= 0) return [];
       const opening = balance;
-      balance = amount(balance + row.received - row.purchasePaid - row.expensePaid + row.journalBalanceChange);
+      balance = amount(balance + row.received + row.journalBalanceChange);
       return [{ ...row, opening, closing: balance }];
     });
   }
@@ -198,6 +147,39 @@
       const net = amount(openingBalance + account.journalBalanceChange);
       return { account: account.account, debit: account.debit, credit: account.credit, balance: amount(Math.abs(net)), side: net >= 0 ? (normalSide === 'debit' ? 'Dr' : 'Cr') : (normalSide === 'debit' ? 'Cr' : 'Dr') };
     });
+  }
+
+  function ledgerStatement(entries, vouchers = [], accountName, from = '', to = '') {
+    const selected = ledgerAccountName(accountName), transactions = [];
+    let order = 0;
+    for (const line of journalLines(entries || [])) for (const side of ['debit', 'credit']) {
+      const account = ledgerAccountName(line[side]), value = amount(line.amount);
+      if (!account || value <= 0) continue;
+      transactions.push({
+        account, date: line.date || '', type: 'Day Book',
+        reference: line.date ? 'DB-' + line.date.replaceAll('-', '') : 'Day Book',
+        details: line.particulars || '', accountName: ledgerAccountName(line[side === 'debit' ? 'credit' : 'debit']),
+        debit: side === 'debit' ? value : 0, credit: side === 'credit' ? value : 0, order: order++
+      });
+    }
+    for (const voucher of (Array.isArray(vouchers) ? vouchers : []).filter(item => !item.voidedAt && !item.voided_at)) {
+      const postings = voucherPostings([voucher]);
+      for (const posting of postings) transactions.push({
+        account: ledgerAccountName(posting.account), date: posting.date || '', type: 'Journal Voucher',
+        reference: posting.voucherNo ? 'JV ' + posting.voucherNo : 'Journal Voucher', details: posting.remark || '',
+        accountName: [...new Set(postings.filter(other => other.account !== posting.account && ((posting.debit > 0 && other.credit > 0) || (posting.credit > 0 && other.debit > 0))).map(other => ledgerAccountName(other.account)))].join(', '),
+        debit: amount(posting.debit), credit: amount(posting.credit), order: order++
+      });
+    }
+    const accountRows = transactions.filter(row => row.account === selected).sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order);
+    const within = date => (!from || date >= from) && (!to || date <= to);
+    const opening = amount(accountRows.filter(row => from && row.date < from).reduce((sum, row) => sum + row.debit - row.credit, 0));
+    let balance = opening, debit = 0, credit = 0;
+    const rows = accountRows.filter(row => within(row.date)).map(row => {
+      debit = amount(debit + row.debit); credit = amount(credit + row.credit); balance = amount(balance + row.debit - row.credit);
+      return { ...row, balance };
+    });
+    return { account: selected, opening, debit, credit, closing: balance, rows };
   }
 
   function validateVoucherLines(lines) {
@@ -235,22 +217,17 @@
     }));
   }
 
-  function voucherNeedsPostingReview(lines) {
-    return Array.isArray(lines) && lines.length >= 2 && !isTransfer(lines) &&
-      lines.every(line => !line.transferRole && !line.postingRule);
-  }
-
-  function voucherLinesForSave(lines, previousLines = [], applyCorrectedRule = false) {
+  function voucherLinesForSave(lines, previousLines = []) {
     const cleaned = (Array.isArray(lines) ? lines : []).map(line => ({
       side: line.side,
       particulars: String(line.particulars || '').trim(),
       amount: Number(line.amount),
     }));
     // An unchanged edit must not rewrite a historical voucher's stored sides.
-    if (!(applyCorrectedRule && voucherNeedsPostingReview(previousLines)) && previousLines.length && JSON.stringify(cleaned) === JSON.stringify(voucherLinesForEdit(previousLines).map(line => ({ side: line.side, particulars: String(line.particulars || '').trim(), amount: Number(line.amount) })))) {
+    if (isLegacyTransfer(previousLines) && JSON.stringify(cleaned) === JSON.stringify(voucherLinesForEdit(previousLines).map(line => ({ side: line.side, particulars: String(line.particulars || '').trim(), amount: Number(line.amount) })))) {
       return previousLines.map(line => ({ ...line }));
     }
-    return isTransfer(cleaned) ? cleaned.map(line => ({ ...line, transferRole: line.side === 'credit' ? 'source' : 'destination' })) : cleaned.map(line => ({ ...line, postingRule: 'account-normal-v1' }));
+    return isTransfer(cleaned) ? cleaned.map(line => ({ ...line, transferRole: line.side === 'credit' ? 'source' : 'destination' })) : cleaned;
   }
 
   function formatMoney(value) {
@@ -258,5 +235,5 @@
     return '₹' + number.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(number) ? 0 : 2, maximumFractionDigits: 2 });
   }
 
-  return { amount, entryPayments, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, ledgerStatement, ledgerAccountName, validateVoucherLines, journalLineSides, voucherLinesForEdit, voucherNeedsPostingReview, voucherLinesForSave, formatMoney };
+  return { amount, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, ledgerStatement, ledgerAccountName, validateVoucherLines, journalLineSides, voucherLinesForEdit, voucherLinesForSave, formatMoney };
 });
