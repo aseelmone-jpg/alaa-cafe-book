@@ -7,6 +7,30 @@
     const number = Number(value || 0);
     return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
   };
+  const ledgerAccountName = value => { const name = String(value || '').trim(); return name === 'UPI' ? 'UPI Account' : name; };
+  function ledgerStatement(entries, vouchers = [], accountName, from = '', to = '') {
+    const selected = ledgerAccountName(accountName), transactions = []; let order = 0;
+    for (const line of journalLines(entries || [])) for (const side of ['debit', 'credit']) {
+      const account = ledgerAccountName(line[side]), value = amount(line.amount);
+      if (!account || value <= 0) continue;
+      transactions.push({ account, date: line.date || '', type: 'Day Book', reference: 'Day Book', details: line.particulars || '', debit: side === 'debit' ? value : 0, credit: side === 'credit' ? value : 0, order: order++ });
+    }
+    for (const posting of voucherPostings(vouchers)) transactions.push({
+      account: ledgerAccountName(posting.account), date: posting.date || '', type: 'Journal Voucher',
+      reference: posting.voucherNo ? 'JV ' + posting.voucherNo : 'Journal Voucher', details: posting.remark || '',
+      debit: amount(posting.debit), credit: amount(posting.credit), order: order++,
+    });
+    const matching = transactions.filter(row => row.account === selected).sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order);
+    const within = date => (!from || date >= from) && (!to || date <= to);
+    const opening = amount(matching.filter(row => from && row.date < from).reduce((sum, row) => sum + row.debit - row.credit, 0));
+    let balance = opening, debit = 0, credit = 0;
+    const rows = matching.filter(row => within(row.date)).map(row => {
+      debit = amount(debit + row.debit); credit = amount(credit + row.credit); balance = amount(balance + row.debit - row.credit);
+      return { ...row, balance };
+    });
+    return { account: selected, opening, debit, credit, closing: balance, rows };
+  }
+
   const transferAccounts = new Set(['Cash', 'UPI Account', 'Bank']);
   const isTransfer = lines => Array.isArray(lines) && lines.length >= 2 &&
     lines.every(line => transferAccounts.has(String(line.particulars || '').trim())) &&
@@ -55,7 +79,7 @@
         const effectiveSide = legacyTransfer ? (line.side === 'debit' ? 'credit' : 'debit') : line.side;
         const debit = effectiveSide === 'debit' ? value : 0;
         const credit = effectiveSide === 'credit' ? value : 0;
-        const normalDebit = ['Cash', 'UPI Account', 'Bank', 'Purchases', 'Other Expenses', 'Expenses'].includes(account);
+        const normalDebit = ['Cash', 'UPI Account', 'Bank', 'Purchases', 'Other Expenses', 'Expenses'].includes(account) || account.startsWith('Staff Advance - ');
         // Unknown historical accounts retain their existing convention; no account types are invented.
         const normalChange = normalDebit ? debit - credit : credit - debit;
         const balanceChange = line.transferRole === 'source' ? -value : line.transferRole === 'destination' ? value : legacyTransfer ? debit - credit : line.postingRule === 'account-normal-v1' ? normalChange : credit - debit;
@@ -234,5 +258,5 @@
     return '₹' + number.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(number) ? 0 : 2, maximumFractionDigits: 2 });
   }
 
-  return { amount, entryPayments, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, validateVoucherLines, journalLineSides, voucherLinesForEdit, voucherNeedsPostingReview, voucherLinesForSave, formatMoney };
+  return { amount, entryPayments, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, ledgerStatement, ledgerAccountName, validateVoucherLines, journalLineSides, voucherLinesForEdit, voucherNeedsPostingReview, voucherLinesForSave, formatMoney };
 });
