@@ -65,7 +65,7 @@ function createUi({ admin = true, shops } = {}) {
     userFeatureAccess: { dayBook:true,sales:true,purchases:true,expenses:true,upiAccount:true,journalEntry:true,cash:true,ledgers:true,reportsPnl: true, addCafe: false, manageAccounts: false },
     featureAccessCafeId: 'cafe-1',
     defaultJournalAccounts: vm.runInNewContext(accountDefaults[1]),
-    journalStorageReady: true, realtimeGeneration: 0, realtimeReadSequence: 0, dayDraftDirty: false, dayDraftVersion: null, journalEditVersion: null,
+    journalStorageReady: true, pendingJournalAccounts: [], realtimeGeneration: 0, realtimeReadSequence: 0, dayDraftDirty: false, dayDraftVersion: null, journalEditVersion: null,
     localStorage: { setItem() {} }, STORE_KEY: 'test-cafes',
     window: { alert: message => alerts.push(message), confirm: () => true },
     document: { querySelector: getNode, querySelectorAll: selector => selector === '.tabs .tab' ? tabs : [] },
@@ -359,8 +359,8 @@ test('the cache persists only the selected cafe ID, never financial records',()=
 
 test('a user without a feature-settings row receives the existing defaults after access loads',async()=>{
  const defaults=vm.runInNewContext('('+html.match(/const featureDefaults=([^;]+);/)[1]+')');
- const context={currentShop:()=>({id:'cafe-1'}),signedInUser:{id:'user-1'},featureDefaults:defaults,isAdmin:()=>false,setRoleAccess(){},supabaseClient:{from:()=>({select(){return this},eq(){return this},async maybeSingle(){return {data:null,error:null}}})}};
- vm.runInNewContext(listener('async function loadUserFeatureAccess('),context);
+ const context={currentShop:()=>({id:'cafe-1',owner_id:'owner-1'}),signedInUser:{id:'user-1',app_metadata:{role:'user'}},featureDefaults:defaults,isAdmin:()=>false,setRoleAccess(){},$:()=>({textContent:''}),supabaseClient:{from:()=>({select(){return this},eq(){return this},async maybeSingle(){return {data:null,error:null}}})}};
+ vm.runInNewContext(listener('async function readUserFeatureAccessFor(')+listener('async function loadUserFeatureAccess('),context);
  await context.loadUserFeatureAccess();assert.equal(context.userFeatureAccess.dayBook,true);assert.equal(context.userFeatureAccess.journalEntry,true);assert.equal(context.userFeatureAccess.addCafe,false);assert.equal(context.featureAccessCafeId,'cafe-1');
 });
 
@@ -486,3 +486,4 @@ test('staff advance account creation is available from Accounts settings',()=>{
  assert.match(html,/pendingJournalAccounts\.push\(accountName\)/);
  assert.match(html,/\.\.\.pendingJournalAccounts/);
 });
+

@@ -91,4 +91,14 @@ test('all application routes are gated by the initial auth state and sign-out in
   assert.match(html, /event==='SIGNED_OUT'[\s\S]*?signedInUser=null[\s\S]*?showLoginScreen/);
 });
 
+test('startup preloads core scripts and fetches cafe data and feature access in parallel',()=>{
+ assert.match(html,/<link rel="preload" href="\/accounting\.js\?v=20261102-startup-opt" as="script">/);
+ assert.match(html,/<link rel="preload" href="\/vendor\/supabase-2\.118\.0\.js" as="script"/);
+ const cloud=html.slice(html.indexOf('async function loadCloud(){'),html.indexOf('async function authAction('));
+ assert.match(cloud,/const featureAccessPromise=readUserFeatureAccessFor\(selectedCafe,loadingUser\)/);
+ assert.match(cloud,/const \[loaded,featureAccessResult\]=await Promise\.all\(/);
+ assert.doesNotMatch(cloud,/await loadUserFeatureAccess\(\)/);
+});
+
+
 

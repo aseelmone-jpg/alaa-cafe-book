@@ -7,6 +7,8 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="preconnect" href="https://zhshcpkgvijbznetfseu.supabase.co" crossorigin>
+<link rel="preload" href="/accounting.js?v=20261102-startup-opt" as="script">
+<link rel="preload" href="/vendor/supabase-2.118.0.js" as="script" integrity="sha384-TcHRA3zBbn+Lexh5n+Oil4guNPOS3rjNDpGRAN46u/s/mB2IZ50ceC6TYDU2yvgK">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="ALAA CAFE">
 <script defer src="/pwa-install.js"></script>
@@ -86,7 +88,7 @@ body.authenticated #forgotPassword,body.authenticated #resendConfirmation,body.l
 <dialog id="journalAccountDialog" class="journal-account-dialog" aria-labelledby="journalAccountTitle"><h3 id="journalAccountTitle">Journal Entry accounts</h3><p>Choose which accounts users can select. Hiding an account does not delete it or affect saved vouchers.</p><section class="staff-ledger-create"><label for="staffLedgerName">Create a staff advance account</label><div><input id="staffLedgerName" type="text" maxlength="80" autocomplete="off" placeholder="Staff name"><button id="addStaffLedger" type="button">Add account</button></div><small id="staffLedgerMessage" role="status"></small></section><div id="journalAccountOptions" class="journal-account-options"></div><div class="journal-account-dialog-actions"><button type="button" id="cancelJournalAccounts">Cancel</button><button type="button" id="saveJournalAccounts">Save</button></div></dialog>
 <p class="foot">☕ <span id="cafeFooterName">ALAA CAFE, CHAPPANANGADI</span></p>
 </div></main>
-<script src="./accounting.js?v=20261102-ledgers"></script>
+<script src="./accounting.js?v=20261102-startup-opt"></script>
 <script src="/vendor/supabase-2.118.0.js" integrity="sha384-TcHRA3zBbn+Lexh5n+Oil4guNPOS3rjNDpGRAN46u/s/mB2IZ50ceC6TYDU2yvgK"></script>
 <script>
 const $=s=>document.querySelector(s), money=n=>CafeAccounting.formatMoney(n);
@@ -311,7 +313,8 @@ function canDeleteCafe(){return canUseManagementFeature('deleteCafe')&&(!isAdmin
 function canUseManagementFeature(key){return !!signedInUser&&(isAdmin()||(featureAccessCafeId===currentShop().id&&userFeatureAccess[key]===true))}
 function setRoleAccess(){const admin=isAdmin();$('#rposTab').classList.toggle('hide',!admin&&userFeatureAccess.rpos!==true);for(const [id,allowed] of [['salesTotal',canUseFeature('dayBook')||canUseFeature('sales')||canUseFeature('reportsPnl')],['expenseTotal',canUseFeature('dayBook')||canUseFeature('purchases')||canUseFeature('expenses')||canUseFeature('reportsPnl')],['upiTotal',canUseFeature('upiAccount')||canUseFeature('dayBook')],['cashTotal',canUseFeature('cash')||canUseFeature('dayBook')]])$('#'+id).parentElement?.classList.toggle('hide',!allowed);$('#reportsTab').classList.toggle('hide',!admin&&userFeatureAccess.reportsPnl===false);$('#addShop').classList.toggle('hide',!canUseManagementFeature('addCafe'));$('#manageJournalAccounts').classList.toggle('hide',!canUseManagementFeature('manageAccounts'));if(!canUseManagementFeature('addCafe'))$('#newShopForm').classList.add('hide');if(!canUseManagementFeature('manageAccounts')&&$('#journalAccountDialog').open)$('#journalAccountDialog').close();$('#userSettings').classList.toggle('hide',!admin);$('#deleteShop').classList.toggle('hide',!canDeleteCafe());document.querySelectorAll('.delete-row').forEach(button=>button.classList.toggle('hide',!admin));document.querySelectorAll('.tabs [data-feature]').forEach(button=>button.classList.toggle('hide',!admin&&userFeatureAccess[button.dataset.feature]===false));if(!admin&&document.querySelector('.tabs .tab.active,#rposTab.active')?.classList.contains('hide')){const first=document.querySelector('.tabs .tab:not(.hide)');if(first)first.click();else{$('#entryForm').classList.add('hide');$('#daybook').classList.add('hide');$('#other').classList.remove('hide');$('#journalApp').classList.add('hide');$('#categoryTable').classList.add('hide');$('#categoryEmpty').classList.add('hide');$('#otherText').textContent='Your admin has not enabled any sections for this cafe account.';$('#otherText').classList.remove('hide')}}}
 const featureLabels={rpos:'RPOS',dayBook:'Day Book',sales:'Sales',purchases:'Purchases',expenses:'Expenses',upiAccount:'UPI Account',reportsPnl:'Reports & P&L',journalEntry:'Journal Entry',cash:'Cash',ledgers:'Ledgers',addCafe:'Add cafe',manageAccounts:'Accounts',deleteCafe:'Delete cafe'};
-async function loadUserFeatureAccess(){const cafeId=currentShop().id,userId=signedInUser?.id;userFeatureAccess=Object.fromEntries(Object.keys(featureDefaults).map(key=>[key,false]));featureAccessCafeId=null;setRoleAccess();if(!signedInUser||isAdmin())return;const {data,error}=await supabaseClient.from('cafe_user_features').select('features').eq('cafe_id',cafeId).eq('user_id',userId).maybeSingle();if(currentShop().id!==cafeId||signedInUser?.id!==userId)return;if(error){$('#authMessage').textContent='Could not load feature access. Run the latest supabase/schema.sql, then refresh.'}else{userFeatureAccess={...featureDefaults,...(data?.features||{})};featureAccessCafeId=cafeId}setRoleAccess()}
+async function readUserFeatureAccessFor(cafe,user){const denied=Object.fromEntries(Object.keys(featureDefaults).map(key=>[key,false]));if(!user||user.app_metadata?.role==='admin'&&cafe.owner_id===user.id)return {features:{...featureDefaults},error:null,admin:true};const {data,error}=await supabaseClient.from('cafe_user_features').select('features').eq('cafe_id',cafe.id).eq('user_id',user.id).maybeSingle();return {features:error?denied:{...featureDefaults,...(data?.features||{})},error,admin:false}}
+async function loadUserFeatureAccess(){const cafe=currentShop(),user=signedInUser,cafeId=cafe.id;userFeatureAccess=Object.fromEntries(Object.keys(featureDefaults).map(key=>[key,false]));featureAccessCafeId=null;setRoleAccess();if(!user)return;const result=await readUserFeatureAccessFor(cafe,user);if(currentShop().id!==cafeId||signedInUser!==user)return;if(result.error)$('#authMessage').textContent='Could not load feature access. Run the latest supabase/schema.sql, then refresh.';else{userFeatureAccess=result.features;featureAccessCafeId=result.admin?null:cafeId}setRoleAccess()}
 function closeSettings(){reviewSequence++;settingsLoadSequence++;settingsContext=null;settingsUsers=[];$('#settingsUser').innerHTML='';$('#settingsFeatureList').innerHTML='';$('#saveFeatureSettings').disabled=true;$('#featureSettings').classList.add('hide')}
 function renderSettingsFeatures(features){features={...featureDefaults,...features};$('#settingsFeatureList').innerHTML=Object.entries(featureLabels).map(([key,label])=>'<label class="feature-option"><span>'+escapeText(label)+'</span><input type="checkbox" data-setting-feature="'+key+'" '+(features[key]!==false?'checked':'')+' aria-label="Allow '+escapeText(label)+'"></label>').join('')}
 async function loadSettingsUsers(){
@@ -565,15 +568,18 @@ async function loadCloud(){
     if(accountAccessCompatibility&&!cafes.some(cafe=>cafe.owner_id===loadingUser.id))throw Error('Approval setup is missing. Only the owning admin can use the read-only local preview.');
     if(!cafes.length)throw Error('No active cafe is assigned. Ask the owner to assign a cafe.');
     journalAccountsReady=true;
-    const loaded=await Promise.all(cafes.map(async cafe=>{
+    const selectedCafe=cafes.find(cafe=>cafe.id===shopData.activeId)||cafes[0];
+    const featureAccessPromise=readUserFeatureAccessFor(selectedCafe,loadingUser);
+    const [loaded,featureAccessResult]=await Promise.all([Promise.all(cafes.map(async cafe=>{
       const snapshot=await readCafeAccounting(cafe),{data,error}=snapshot;
       if(error)throw new Error('Could not load accounting access: '+error.message);
       return {...cafe,approvalReadOnly:accountAccessCompatibility,compatibilityReadOnly:snapshot.compatibilityReadOnly===true||accountAccessCompatibility,paymentSplitsVersion:data.payment_splits_version===1?1:0,entries:(data.day_entries||[]).map(dayRow),journalVouchers:(data.journal_vouchers||[]).map(voucherRow),journalAccountOptions:data.journal_account_options||[]};
-    }));
+    })),featureAccessPromise]);
     if(!sessionStillActive())return false;
     if(!loaded.length)throw new Error('No active cafes are available for this account. Ask your admin to assign a cafe.');
-    shopData.shops=loaded;activeShopId=loaded.some(shop=>shop.id===shopData.activeId)?shopData.activeId:loaded[0].id;entries=currentShop().entries;updateShopUI();render();
-    await loadUserFeatureAccess();if(!sessionStillActive())return false;setRoleAccess();syncEntryForm();
+    shopData.shops=loaded;activeShopId=loaded.some(shop=>shop.id===selectedCafe.id)?selectedCafe.id:loaded[0].id;entries=currentShop().entries;
+    userFeatureAccess=featureAccessResult.error?Object.fromEntries(Object.keys(featureDefaults).map(key=>[key,false])):featureAccessResult.features;featureAccessCafeId=featureAccessResult.error||featureAccessResult.admin?null:selectedCafe.id;
+    updateShopUI();setRoleAccess();render();if(!sessionStillActive())return false;syncEntryForm();
     cloudReady=true;$('#signIn').classList.add('hide');$('#signUp').classList.add('hide');$('#signOut').classList.remove('hide');
     document.body.classList.remove('auth-initializing','login-mode');document.body.classList.add('authenticated');
     $('#authMessage').textContent='Signed in as '+signedInUser.email+' · changes sync with Supabase.';$('#authSpinner').classList.add('hide');$('#authLoadActions').classList.add('hide');
@@ -620,4 +626,5 @@ initializeAuth();
 document.addEventListener('wheel',event=>{const input=event.target;if(input instanceof HTMLInputElement&&input.type==='number'&&input===document.activeElement)input.blur()},{capture:true,passive:true});
 document.querySelector('#togglePassword').addEventListener('click',()=>{const input=document.querySelector('#authPassword'),button=document.querySelector('#togglePassword'),show=input.type==='password';input.type=show?'text':'password';button.setAttribute('aria-pressed',String(show));button.setAttribute('aria-label',show?'Hide password':'Show password');button.title=show?'Hide password':'Show password';});</script><div class="app-install"><button id="installCafeApp" type="button" aria-controls="installCafeHelp" hidden>Install ALAA CAFE</button><p id="installCafeHelp" role="status" hidden></p></div>
 <script src="/rpos-demo.js"></script></body></html>
+
 

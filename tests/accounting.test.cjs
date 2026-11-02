@@ -281,7 +281,7 @@ test('formats paise when present and whole rupees without trailing decimals', ()
 test('ledger statements show isolated account transactions and running balance',()=>{
  const entries=[{date:'2026-01-01',sale:100,upi:40,purchase:10,otherExpense:5}];
  const cash=accounting.ledgerStatement(entries,[],'Cash');assert.equal(cash.debit,60);assert.equal(cash.credit,15);assert.equal(cash.closing,45);assert.equal(cash.rows.length,3);
- const sales=accounting.ledgerStatement(entries,[],'Sales');assert.equal(sales.credit,100);assert.equal(sales.rows.length,1);
+ const sales=accounting.ledgerStatement(entries,[],'Sales');assert.equal(sales.credit,100);assert.equal(sales.rows.length,2);assert.deepEqual(sales.rows.map(row=>row.accountName).sort(),['Cash','UPI Account']);
 });
 test('account statements include date document references and counterpart accounts',()=>{
  const entries=[{date:'2026-01-01',sale:100,upi:40,purchase:10,otherExpense:5,remarks:'beans'}];
@@ -298,4 +298,5 @@ test('account statements include date document references and counterpart accoun
  const account='Staff Advance - Amina',vouchers=[{date:'2026-10-02',voucherNo:1,remark:'Advance paid',lines:[{side:'debit',particulars:account,amount:200,postingRule:'account-normal-v1'},{side:'credit',particulars:'Cash',amount:200,postingRule:'account-normal-v1'}]}];
  const staff=accounting.ledgerStatement([],vouchers,account);assert.equal(staff.debit,200);assert.equal(staff.closing,200);assert.equal(accounting.totals([],vouchers).expenses,0);
 });
+
 
