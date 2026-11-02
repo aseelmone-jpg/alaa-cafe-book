@@ -283,7 +283,19 @@ test('ledger statements show isolated account transactions and running balance',
  const cash=accounting.ledgerStatement(entries,[],'Cash');assert.equal(cash.debit,60);assert.equal(cash.credit,15);assert.equal(cash.closing,45);assert.equal(cash.rows.length,3);
  const sales=accounting.ledgerStatement(entries,[],'Sales');assert.equal(sales.credit,100);assert.equal(sales.rows.length,1);
 });
-test('staff advance subledger increases on debit without counting as expense',()=>{
+test('account statements include date document references and counterpart accounts',()=>{
+ const entries=[{date:'2026-01-01',sale:100,upi:40,purchase:10,otherExpense:5,remarks:'beans'}];
+ const cash=accounting.ledgerStatement(entries,[],'Cash');
+ assert.equal(cash.rows[0].reference,'DB-20260101');
+ assert.equal(cash.rows[0].accountName,'Sales');
+ const purchases=accounting.ledgerStatement(entries,[],'Purchases');
+ assert.equal(purchases.rows[0].accountName,'Cash');
+ assert.equal(purchases.rows[0].details,'beans');
+ const voucher=accounting.ledgerStatement([],[{date:'2026-01-02',voucherNo:7,remark:'cash transfer',lines:[{side:'debit',particulars:'UPI Account',amount:20,transferRole:'destination'},{side:'credit',particulars:'Cash',amount:20,transferRole:'source'}]}],'Cash');
+ assert.equal(voucher.rows[0].reference,'JV 7');
+ assert.equal(voucher.rows[0].accountName,'UPI Account');
+});test('staff advance subledger increases on debit without counting as expense',()=>{
  const account='Staff Advance - Amina',vouchers=[{date:'2026-10-02',voucherNo:1,remark:'Advance paid',lines:[{side:'debit',particulars:account,amount:200,postingRule:'account-normal-v1'},{side:'credit',particulars:'Cash',amount:200,postingRule:'account-normal-v1'}]}];
  const staff=accounting.ledgerStatement([],vouchers,account);assert.equal(staff.debit,200);assert.equal(staff.closing,200);assert.equal(accounting.totals([],vouchers).expenses,0);
 });
+

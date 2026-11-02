@@ -13,13 +13,17 @@
     for (const line of journalLines(entries || [])) for (const side of ['debit', 'credit']) {
       const account = ledgerAccountName(line[side]), value = amount(line.amount);
       if (!account || value <= 0) continue;
-      transactions.push({ account, date: line.date || '', type: 'Day Book', reference: 'Day Book', details: line.particulars || '', debit: side === 'debit' ? value : 0, credit: side === 'credit' ? value : 0, order: order++ });
+      transactions.push({ account, date: line.date || '', type: 'Day Book', reference: line.date ? 'DB-' + line.date.replaceAll('-', '') : 'Day Book', details: line.particulars || '', accountName: ledgerAccountName(line[side === 'debit' ? 'credit' : 'debit']), debit: side === 'debit' ? value : 0, credit: side === 'credit' ? value : 0, order: order++ });
     }
-    for (const posting of voucherPostings(vouchers)) transactions.push({
-      account: ledgerAccountName(posting.account), date: posting.date || '', type: 'Journal Voucher',
-      reference: posting.voucherNo ? 'JV ' + posting.voucherNo : 'Journal Voucher', details: posting.remark || '',
-      debit: amount(posting.debit), credit: amount(posting.credit), order: order++,
-    });
+    for (const voucher of (Array.isArray(vouchers) ? vouchers : []).filter(item => !item.voidedAt && !item.voided_at)) {
+      const postings = voucherPostings([voucher]);
+      for (const posting of postings) transactions.push({
+        account: ledgerAccountName(posting.account), date: posting.date || '', type: 'Journal Voucher',
+        reference: posting.voucherNo ? 'JV ' + posting.voucherNo : 'Journal Voucher', details: posting.remark || '',
+        accountName: [...new Set(postings.filter(other => other.account !== posting.account && ((posting.debit > 0 && other.credit > 0) || (posting.credit > 0 && other.debit > 0))).map(other => ledgerAccountName(other.account)))].join(', '),
+        debit: amount(posting.debit), credit: amount(posting.credit), order: order++,
+      });
+    }
     const matching = transactions.filter(row => row.account === selected).sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order);
     const within = date => (!from || date >= from) && (!to || date <= to);
     const opening = amount(matching.filter(row => from && row.date < from).reduce((sum, row) => sum + row.debit - row.credit, 0));
@@ -260,3 +264,4 @@
 
   return { amount, entryPayments, validateEntry, dailyBalances, totals, journalLines, voucherPostings, upiStatement, ledgers, ledgerStatement, ledgerAccountName, validateVoucherLines, journalLineSides, voucherLinesForEdit, voucherNeedsPostingReview, voucherLinesForSave, formatMoney };
 });
+
