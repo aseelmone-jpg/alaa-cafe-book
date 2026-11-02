@@ -476,3 +476,13 @@ test('cancelling the legacy calculation correction makes no request and keeps th
  ui.run('loadJournalVoucher(currentShop().journalVouchers[0])');ui.getNode('#journalCorrectPosting').checked=true;ui.context.window.confirm=()=>false;
  await ui.getNode('#journalSave').handlers.click();assert.equal(ui.requests.length,0);assert.deepEqual(ui.shopData.shops[0].journalVouchers[0],voucher);
 });
+
+test('new Day Book entry amount controls start blank',()=>{
+ const a=html.indexOf('function syncEntryForm()'),b=html.indexOf('function matchesDayEntry',a);
+ assert.match(html.slice(a,b),/entry\?\(entry\[key\]\?\?0\):''/);
+});
+test('staff advance account creation is available from Accounts settings',()=>{
+ assert.match(html,/Create a staff advance account/);
+ assert.match(html,/pendingJournalAccounts\.push\(accountName\)/);
+ assert.match(html,/\.\.\.pendingJournalAccounts/);
+});
