@@ -86,7 +86,7 @@ body.authenticated #forgotPassword,body.authenticated #resendConfirmation,body.l
 <dialog id="journalAccountDialog" class="journal-account-dialog" aria-labelledby="journalAccountTitle"><h3 id="journalAccountTitle">Journal Entry accounts</h3><p>Choose which accounts users can select. Hiding an account does not delete it or affect saved vouchers.</p><section class="staff-ledger-create"><label for="staffLedgerName">Create a staff advance account</label><div><input id="staffLedgerName" type="text" maxlength="80" autocomplete="off" placeholder="Staff name"><button id="addStaffLedger" type="button">Add account</button></div><small id="staffLedgerMessage" role="status"></small></section><div id="journalAccountOptions" class="journal-account-options"></div><div class="journal-account-dialog-actions"><button type="button" id="cancelJournalAccounts">Cancel</button><button type="button" id="saveJournalAccounts">Save</button></div></dialog>
 <p class="foot">☕ <span id="cafeFooterName">ALAA CAFE, CHAPPANANGADI</span></p>
 </div></main>
-<script src="./accounting.js"></script>
+<script src="./accounting.js?v=20261102-ledgers"></script>
 <script src="/vendor/supabase-2.118.0.js" integrity="sha384-TcHRA3zBbn+Lexh5n+Oil4guNPOS3rjNDpGRAN46u/s/mB2IZ50ceC6TYDU2yvgK"></script>
 <script>
 const $=s=>document.querySelector(s), money=n=>CafeAccounting.formatMoney(n);
