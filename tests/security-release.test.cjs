@@ -21,7 +21,7 @@ test('permission fallback inspects navigation tabs, never active auth buttons',(
 
 test('Supabase SDK is pinned, local and matches its integrity attribute',()=>{
  const script=html.match(/<script src="(\/vendor\/supabase-[\d.]+\.js)" integrity="sha384-([^"]+)"/);
- assert.ok(script);const bytes=fs.readFileSync(path.join(root,'public',script[1]));
+ assert.ok(script);const bytes=fs.readFileSync(path.join(root,'public',script[1])).toString('utf8').replace(/\r\n/g,'\n');
  assert.equal(crypto.createHash('sha384').update(bytes).digest('base64'),script[2]);
  assert.doesNotMatch(html,/cdn\.jsdelivr\.net\/npm\/@supabase\/supabase-js@2/);
  new vm.Script(bytes.toString('utf8'));
@@ -79,3 +79,4 @@ test('installation manifest icons exist with their declared dimensions',()=>{
   assert.equal(png.readUInt32BE(16)+'x'+png.readUInt32BE(20),icon.sizes);
  }
 });
+
